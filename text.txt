@@ -1,0 +1,44 @@
+// REGISTER
+
+curl -v http://localhost:8080/api/user/register \
+  -H "Content-Type: application/json" \
+  -d '{"login":"user","password":"user"}'
+
+
+// LOGIN
+
+curl -v http://localhost:8080/api/user/login \
+  -H "Content-Type: application/json" \
+  -d '{"login":"user","password":"user"}'
+
+  eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTcxNjg0MTIsInVzZXJfaWQiOjh9.1UIGBBB2UBcqdxcmDGiqx3KwPUpTHrzdtIUDScHIaG8
+
+// New Order
+
+  curl -v http://localhost:8080/api/user/orders \
+  -H "Content-Type: text/plain" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTcxNjg4NTEsInVzZXJfaWQiOjh9.gsoSMYTl9JF8wzl7v8si1h85POtoIN1HKiWERE155PU" \
+  -d "12345678903"
+
+  // Get List 
+
+  curl -v -X GET http://localhost:8080/api/user/orders \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTcxNjkwODEsInVzZXJfaWQiOjh9.4_gYeYlCVdgJtvlWNAbWb8o1MfIXePKhLRz-_wRTpg8" \
+  -H "Accept: application/json"
+
+    // Get Balance
+
+  curl -v -X GET http://localhost:8080/api/user/balance \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTcxNjkwODEsInVzZXJfaWQiOjh9.4_gYeYlCVdgJtvlWNAbWb8o1MfIXePKhLRz-_wRTpg8" \
+  -H "Accept: application/json"
+
+    // Запрос на списание
+
+curl -v -X GET http://localhost:8080/api/user/balance/withdraw \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTcxNjk2NTIsInVzZXJfaWQiOjh9.1wmNLrBigtFiUCrgC2Djb4tYxYWSI7iYMd_lP21KA8g" \
+  -H "Content-Type: application/json" \
+  -d '{"order":"2377225624","sum":"250"}'
+
+  curl -v -X GET http://localhost:8080/api/user/withdrawals \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTcxNjk2NTIsInVzZXJfaWQiOjh9.1wmNLrBigtFiUCrgC2Djb4tYxYWSI7iYMd_lP21KA8g" \
+  -H "Accept: application/json"

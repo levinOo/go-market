@@ -1,0 +1,295 @@
+package db
+
+import (
+	"context"
+	"errors"
+	"log"
+	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+var (
+	ErrLoginExists         = errors.New("login already exists")
+	ErrUserNotExists       = errors.New("user not exists")
+	ErrInsufficientBalance = errors.New("insufficient balance")
+)
+
+type Order struct {
+	Number   int       `json:"number"`
+	Status   string    `json:"status"`
+	Accrual  *int      `json:"accrual,omitempty"`
+	Uploaded time.Time `json:"uploaded_at"`
+}
+
+type Withdraw struct {
+	Order       int       `json:"order"`
+	Sum         float64   `json:"sum"`
+	ProcessedAt time.Time `json:"processed_at"`
+}
+
+type UserBalance struct {
+	Current  float64 `json:"current"`
+	Withdraw float64 `json:"withdraw"`
+}
+
+func ConnectDB(DBAddr string) *pgx.Conn {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := pgx.Connect(ctx, DBAddr) // context 5 * seconds
+	if err != nil {
+		log.Println(err)
+	}
+
+	return conn
+}
+
+// ____________________Регистрация пользователя:
+
+func RegisterReq(login string, password string, conn *pgx.Conn) (int, error) {
+	var userID int
+
+	err := conn.QueryRow(context.Background(), `
+        INSERT INTO users (login, password)
+        VALUES ($1, $2)
+        ON CONFLICT (login) DO NOTHING
+        RETURNING id;
+    `, login, password).Scan(&userID)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrLoginExists
+		}
+		return 0, err
+	}
+
+	return newBalanceRecord(conn, userID)
+}
+
+func newBalanceRecord(conn *pgx.Conn, userID int) (int, error) {
+	_, err := conn.Exec(context.Background(), `
+        INSERT INTO balance (user_id)
+        VALUES ($1);
+    `, userID)
+	if err != nil {
+		return 0, err
+	}
+	return userID, nil
+}
+
+// ____________________Аутентификация пользователя:
+
+func AuthReq(conn *pgx.Conn, login string) (int, string, error) {
+	var (
+		password string
+		userID   int
+	)
+
+	err := conn.QueryRow(context.Background(), `
+        SELECT password, id
+        FROM users
+        WHERE login = $1
+    `, login).Scan(&password, &userID)
+	if err != nil {
+		return 0, "", err
+	}
+
+	return userID, password, nil
+}
+
+func GetPassword(login string, conn *pgx.Conn) (string, error) {
+	var password string
+
+	err := conn.QueryRow(context.Background(), `
+        SELECT password
+        FROM users
+        WHERE login = $1
+    `, login).Scan(&password)
+
+	if err != nil {
+		return "", err
+	}
+
+	return password, nil
+}
+
+// ____________________Загрузка номера заказа:
+
+func CheckUniqOrder(orderNum int, conn *pgx.Conn) (string, error) {
+	var receivedUserID string
+
+	err := conn.QueryRow(context.Background(), `
+		SELECT user_id
+		FROM orders
+		WHERE order_number = $1
+	`, orderNum).Scan(&receivedUserID)
+
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	return receivedUserID, nil
+}
+
+func AddOrder(orderNum int, userID string, conn *pgx.Conn) error {
+	uploadedAt := time.Now().Format(time.RFC3339)
+	status := "NEW"
+
+	_, err := conn.Exec(
+		context.Background(),
+		`INSERT INTO orders (user_id, order_number, uploaded_at, status) VALUES ($1, $2, $3, $4)`,
+		userID, orderNum, uploadedAt, status,
+	)
+
+	return err
+}
+
+func UpdateOrderStatus(conn *pgx.Conn, status string, accrual float64, orderNum int, userID string) error {
+	switch status {
+	case "PROCESSED":
+		_, err := conn.Exec(context.Background(), `
+		UPDATE orders
+		SET status = $1, accrual = $2
+		WHERE order_number = $3
+		`, status, accrual, orderNum)
+
+		if err != nil {
+			return err
+		}
+
+		_, err = conn.Exec(context.Background(), `
+		UPDATE balance
+    	SET current = current + $1
+   		WHERE user_id = $2
+		`, accrual, userID)
+		if err != nil {
+			return err
+		}
+
+	default:
+		_, err := conn.Exec(context.Background(), `
+		UPDATE orders
+		SET status = $1
+		WHERE order_number = $2
+		`, status, orderNum)
+
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// ____________________Получение списка загруженных номеров заказов:
+
+func GetOrdersList(conn *pgx.Conn, userID string) ([]Order, error) {
+	var orders []Order
+
+	rows, err := conn.Query(context.Background(), `
+        SELECT order_number, status, accrual, uploaded_at
+        FROM orders
+        WHERE user_id = $1
+        ORDER BY uploaded_at DESC
+    `, userID)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var o Order
+		if err := rows.Scan(&o.Number, &o.Status, &o.Accrual, &o.Uploaded); err != nil {
+			return nil, err
+		}
+		orders = append(orders, o)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return orders, nil
+}
+
+// ____________________Получение текущего баланса пользователя:
+
+func GetUserBalance(conn *pgx.Conn, userID string) (UserBalance, error) {
+	var u UserBalance
+
+	err := conn.QueryRow(context.Background(), `
+		SELECT current, withdraw
+		FROM balance
+		WHERE user_id = $1
+	`, userID).Scan(&u.Current, &u.Withdraw)
+
+	if err != nil {
+		return UserBalance{}, err
+	}
+
+	return u, nil
+}
+
+// ____________________Запрос на списание средств:
+
+func SuccessWithdraw(conn *pgx.Conn, userID, orderNum, amount string) error {
+	res, err := conn.Exec(context.Background(), `
+        UPDATE balance
+        SET current = current - $1
+        WHERE user_id = $2 AND current >= $1
+    `, amount, userID)
+	if err != nil {
+		return err
+	}
+
+	if res.RowsAffected() == 0 {
+		return ErrInsufficientBalance
+	}
+
+	processedAt := time.Now().Format(time.RFC3339)
+
+	_, err = conn.Exec(context.Background(), `
+        INSERT INTO withdraw (user_id, order_number, amount, processed_at)
+        VALUES ($1, $2, $3, $4)
+    `, userID, orderNum, amount, processedAt)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// ____________________Получение информации о выводе средств:
+
+func GetWitthdrawsList(conn *pgx.Conn, userID string) ([]Withdraw, error) {
+	var withdraw []Withdraw
+
+	rows, err := conn.Query(context.Background(), `
+	SELECT order_number, amount, processed_at
+	FROM withdraw
+	WHERE user_id = $1
+	`, userID)
+
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var w Withdraw
+		if err := rows.Scan(&w.Order, &w.Sum, &w.ProcessedAt); err != nil {
+			return nil, err
+		}
+		withdraw = append(withdraw, w)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return withdraw, nil
+}
