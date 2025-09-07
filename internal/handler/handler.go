@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -21,6 +22,10 @@ import (
 	"github.com/theplant/luhn"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type ctxKey string
+
+const userKey ctxKey = "user_id" // заменить везде на этот ключ
 
 type User struct {
 	Login    string `json:"login"`
@@ -85,7 +90,7 @@ func authMiddleware(next http.HandlerFunc, key string) http.HandlerFunc {
 		}
 
 		if userID, ok := claims["user_id"].(float64); ok {
-			ctx := context.WithValue(r.Context(), "user_id", strconv.Itoa(int(userID)))
+			ctx := context.WithValue(r.Context(), userKey, strconv.Itoa(int(userID)))
 			r = r.WithContext(ctx)
 		}
 		// проверка а что если не flot64
@@ -120,7 +125,7 @@ func registerHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Ha
 			return
 		}
 
-		userId, err := db.RegisterReq(u.Login, string(password), conn)
+		userID, err := db.RegisterReq(u.Login, string(password), conn)
 		if err != nil {
 			if errors.Is(err, db.ErrLoginExists) {
 				log.Printf("login already exists: %v", err)
@@ -132,7 +137,7 @@ func registerHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Ha
 			return
 		}
 
-		token, err := buildJWT(userId, secretKey)
+		token, err := buildJWT(userID, secretKey)
 		if err != nil {
 			log.Printf("failed to generate token: %v", err)
 			http.Error(rw, "internal server error", http.StatusInternalServerError)
@@ -227,13 +232,13 @@ func loadOrderNumHandler(conn *pgx.Conn) http.HandlerFunc {
 			return
 		}
 
-		receivedUserId, err := db.CheckUniqOrder(orderNum, conn)
+		receivedUserID, err := db.CheckUniqOrder(orderNum, conn)
 		if err != nil {
 			http.Error(rw, "bad request", http.StatusBadRequest)
 			return
 		}
 
-		switch receivedUserId {
+		switch receivedUserID {
 		case "":
 			err := db.AddOrder(orderNum, userID, conn)
 			if err != nil {
@@ -258,7 +263,7 @@ func loadOrderNumHandler(conn *pgx.Conn) http.HandlerFunc {
 
 func getOrderList(conn *pgx.Conn) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value("user_id").(string)
+		userID, ok := r.Context().Value(userKey).(string)
 		if !ok || userID == "" {
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
 			return
@@ -282,11 +287,16 @@ func getOrderList(conn *pgx.Conn) http.HandlerFunc {
 			return
 		}
 
-		// сжатие данных
-
-		rw.Header().Set("Content-Type", "application/json")
+		rw.Header().Set("Content-Encoding", "gzip")
 		rw.WriteHeader(http.StatusOK)
-		rw.Write(jsonData)
+
+		gz := gzip.NewWriter(rw)
+		defer gz.Close()
+		_, err = gz.Write(jsonData)
+		if err != nil {
+			http.Error(rw, "internal serer error", http.StatusInternalServerError)
+			return
+		}
 	}
 }
 
@@ -381,17 +391,23 @@ func getWithdrawList(conn *pgx.Conn) http.HandlerFunc {
 			return
 		}
 
-		//сжатие данных
-
+		rw.Header().Set("Content-Encoding", "gzip")
 		rw.WriteHeader(http.StatusOK)
-		rw.Write(jsonData)
+
+		gz := gzip.NewWriter(rw)
+		defer gz.Close()
+		_, err = gz.Write(jsonData)
+		if err != nil {
+			http.Error(rw, "internal serer error", http.StatusInternalServerError)
+			return
+		}
 	}
 }
 
-func buildJWT(userId int, key string) (string, error) {
+func buildJWT(userID int, key string) (string, error) {
 
 	claims := jwt.MapClaims{
-		"user_id": userId,
+		"user_id": userID,
 		"exp":     time.Now().Add(time.Hour * 24).Unix(),
 	}
 
