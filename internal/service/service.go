@@ -16,12 +16,17 @@ import (
 )
 
 func Serve(cfg config.Config) error {
-	db, err := db.ConnectDB(cfg.DataBaseAddr)
+	dbConn, err := db.ConnectDB(cfg.DataBaseAddr)
 	if err != nil {
 		log.Fatalf("DB connection failed: %v", err)
 	}
 
-	router := handler.NewRouter(db, cfg)
+	err = db.RunMigrations(cfg.DataBaseAddr)
+	if err != nil {
+		log.Fatalf("failed to run migrations: %v", err)
+	}
+
+	router := handler.NewRouter(dbConn, cfg)
 
 	serverErr := make(chan error, 1)
 
@@ -38,7 +43,7 @@ func Serve(cfg config.Config) error {
 		}
 	}()
 
-	return shutdownServer(srv, db, serverErr)
+	return shutdownServer(srv, dbConn, serverErr)
 }
 
 func shutdownServer(srv *http.Server, db *pgx.Conn, serverErr <-chan error) error {

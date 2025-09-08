@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/golang-migrate/migrate"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -43,6 +44,24 @@ func ConnectDB(DBAddr string) (*pgx.Conn, error) {
 	}
 
 	return conn, nil
+}
+
+func RunMigrations(connString string) error {
+	migrationsPath := "file://migrations"
+	m, err := migrate.New(
+		migrationsPath,
+		connString,
+	)
+	if err != nil {
+		return fmt.Errorf("could not create migrate instance: %w", err)
+	}
+
+	err = m.Up()
+	if err != nil && err != migrate.ErrNoChange {
+		return fmt.Errorf("migration failed: %w", err)
+	}
+
+	return nil
 }
 
 // ____________________Регистрация пользователя:
