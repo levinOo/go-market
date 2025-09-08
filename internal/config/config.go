@@ -15,7 +15,7 @@ type Config struct {
 
 func GetConfig() Config {
 	addrFlag := flag.String("a", "localhost:8080", "HTTP server addres")
-	addrDB := flag.String("d", "postgres://mihailtur@localhost:5432/postgres", "Database uri")
+	addrDB := flag.String("d", "", "Database uri")
 	addrSystem := flag.String("r", "", "System addres")
 	pepperKey := flag.String("k", "", "Hash key")
 	secretKey := flag.String("s", "", "Secret key")

@@ -16,7 +16,11 @@ import (
 )
 
 func Serve(cfg config.Config) error {
-	db := db.ConnectDB(cfg.DataBaseAddr)
+	db, err := db.ConnectDB(cfg.DataBaseAddr)
+	if err != nil {
+		log.Fatalf("DB connection failed: %v", err)
+	}
+
 	router := handler.NewRouter(db, cfg)
 
 	serverErr := make(chan error, 1)

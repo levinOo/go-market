@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -64,13 +63,12 @@ func NewRouter(db *pgx.Conn, cfg config.Config) *chi.Mux {
 
 func authMiddleware(next http.HandlerFunc, key string) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		authHeader := r.Header.Get("Authorization")
-		if authHeader == "" {
-			http.Error(rw, "missing Authorization header", http.StatusUnauthorized)
+		cookie, err := r.Cookie("token")
+		if err != nil {
+			http.Error(rw, "missing token", http.StatusUnauthorized)
 			return
 		}
-
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		tokenString := cookie.Value
 
 		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -89,11 +87,13 @@ func authMiddleware(next http.HandlerFunc, key string) http.HandlerFunc {
 			return
 		}
 
-		if userID, ok := claims["user_id"].(float64); ok {
-			ctx := context.WithValue(r.Context(), userKey, strconv.Itoa(int(userID)))
+		if userIDf, ok := claims["user_id"].(float64); ok {
+			ctx := context.WithValue(r.Context(), userKey, strconv.Itoa(int(userIDf)))
 			r = r.WithContext(ctx)
+		} else {
+			http.Error(rw, "invalid user_id claim", http.StatusUnauthorized)
+			return
 		}
-		// проверка а что если не flot64
 
 		next.ServeHTTP(rw, r)
 	}
@@ -109,12 +109,17 @@ func registerHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Ha
 			http.Error(rw, "internal server error", http.StatusInternalServerError)
 			return
 		}
-		defer r.Body.Close()
 
 		err = json.Unmarshal(body, &u)
 		if err != nil {
 			log.Printf("failed to unmarshal JSON: %v", err)
 			http.Error(rw, "invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		if u.Login == "" || u.Password == "" {
+			log.Printf("login and password are empty")
+			http.Error(rw, "login and password are required", http.StatusBadRequest)
 			return
 		}
 
@@ -144,9 +149,14 @@ func registerHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Ha
 			return
 		}
 
-		rw.Header().Add("Authorization", "Bearer "+token)
+		http.SetCookie(rw, &http.Cookie{
+			Name:     "token",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   false,
+		})
 		rw.WriteHeader(http.StatusOK)
-		rw.Write([]byte("user registered"))
 	}
 }
 
@@ -166,6 +176,12 @@ func loginHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Handl
 		if err != nil {
 			log.Printf("failed to unmarshal JSON: %v", err)
 			http.Error(rw, "invalid request format", http.StatusBadRequest)
+			return
+		}
+
+		if u.Login == "" || u.Password == "" {
+			log.Printf("login and password are empty")
+			http.Error(rw, "login and password are required", http.StatusBadRequest)
 			return
 		}
 
@@ -195,10 +211,14 @@ func loginHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Handl
 			return
 		}
 
-		rw.Header().Add("Authorization", "Bearer "+token)
+		http.SetCookie(rw, &http.Cookie{
+			Name:     "token",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   false,
+		})
 		rw.WriteHeader(http.StatusOK)
-		rw.Write([]byte("user is Autorized"))
-
 	}
 }
 

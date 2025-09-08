@@ -3,7 +3,7 @@ package db
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -33,15 +33,16 @@ type UserBalance struct {
 	Withdraw float64 `json:"withdraw"`
 }
 
-func ConnectDB(DBAddr string) *pgx.Conn {
+func ConnectDB(DBAddr string) (*pgx.Conn, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, err := pgx.Connect(ctx, DBAddr) // context 5 * seconds
+
+	conn, err := pgx.Connect(ctx, DBAddr)
 	if err != nil {
-		log.Println(err)
+		return nil, fmt.Errorf("failed to connect to db: %w", err)
 	}
 
-	return conn
+	return conn, nil
 }
 
 // ____________________Регистрация пользователя:
