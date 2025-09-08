@@ -114,7 +114,7 @@ func registerHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Ha
 		err = json.Unmarshal(body, &u)
 		if err != nil {
 			log.Printf("failed to unmarshal JSON: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, "invalid request format", http.StatusBadRequest)
 			return
 		}
 
@@ -133,7 +133,7 @@ func registerHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Ha
 				return
 			}
 			log.Printf("failed to register user: %v", err)
-			http.Error(rw, "bad request", http.StatusBadRequest)
+			http.Error(rw, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
@@ -165,7 +165,7 @@ func loginHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Handl
 		err = json.Unmarshal(body, &u)
 		if err != nil {
 			log.Printf("failed to unmarshal JSON: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, "invalid request format", http.StatusBadRequest)
 			return
 		}
 
@@ -173,11 +173,11 @@ func loginHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Handl
 		if err != nil {
 			if errors.Is(err, db.ErrUserNotExists) {
 				log.Printf("unknown user: %v", err)
-				http.Error(rw, "invalid login or password", http.StatusUnauthorized)
+				http.Error(rw, "unknown user", http.StatusUnauthorized)
 				return
 			}
 			log.Printf("failed to get password: %v", err)
-			http.Error(rw, "bad request", http.StatusBadRequest)
+			http.Error(rw, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
