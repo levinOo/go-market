@@ -27,7 +27,7 @@ func AccrualRequest(conn *pgx.Conn, orderNum int, userID, accrualAddr string) {
 		log.Printf("err to update order status: %v", err)
 	}
 
-	uri := fmt.Sprintf("http://%s/api/orders/%v", accrualAddr, orderNum)
+	uri := fmt.Sprintf("%s/api/orders/%v", accrualAddr, orderNum)
 
 	// реализовать кол-во повторений // retryable 1 3 5 секунд
 	for i := 0; i < 3; i++ {
