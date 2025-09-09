@@ -14,7 +14,7 @@ type Config struct {
 }
 
 func GetConfig() Config {
-	addrFlag := flag.String("a", "localhost:8080", "HTTP server addres")
+	addrServer := flag.String("a", "localhost:8080", "HTTP server addres")
 	addrDB := flag.String("d", "", "Database uri")
 	addrSystem := flag.String("r", "", "System addres")
 	pepperKey := flag.String("k", "", "Hash key")
@@ -23,17 +23,17 @@ func GetConfig() Config {
 	flag.Parse()
 
 	cfg := Config{
-		Addr:         getString(*addrFlag, os.Getenv("RUN_ADDRESS")),
-		DataBaseAddr: getString(*addrDB, os.Getenv("DATABASE_URI")),
-		SystemAddr:   getString(*addrSystem, os.Getenv("ACCRUAL_SYSTEM_ADDRESS")),
-		PepperKey:    getString(*pepperKey, os.Getenv("KEY")),
-		SecretKey:    getString(*secretKey, os.Getenv("SECRET_KEY")),
+		Addr:         getValue(*addrServer, os.Getenv("RUN_ADDRESS")),
+		DataBaseAddr: getValue(*addrDB, os.Getenv("DATABASE_URI")),
+		SystemAddr:   getValue(*addrSystem, os.Getenv("ACCRUAL_SYSTEM_ADDRESS")),
+		PepperKey:    getValue(*pepperKey, os.Getenv("KEY")),
+		SecretKey:    getValue(*secretKey, os.Getenv("SECRET_KEY")),
 	}
 
 	return cfg
 }
 
-func getString(flagValue string, envValue string) string {
+func getValue(flagValue, envValue string) string {
 	if flagValue != "" {
 		return flagValue
 	}

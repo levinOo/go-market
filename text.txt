@@ -43,4 +43,4 @@ curl -v -X GET http://localhost:8080/api/user/balance/withdraw \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3NTcxNjk2NTIsInVzZXJfaWQiOjh9.1wmNLrBigtFiUCrgC2Djb4tYxYWSI7iYMd_lP21KA8g" \
   -H "Accept: application/json"
 
-  postgres : postgres://mihailtur@localhost:5432/postgres
+  postgres : postgres://mihailtur@localhost:5432/postgres?sslmode=disable

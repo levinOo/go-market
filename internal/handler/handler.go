@@ -24,7 +24,7 @@ import (
 
 type ctxKey string
 
-const userKey ctxKey = "user_id" // заменить везде на этот ключ
+const userKey ctxKey = "user_id"
 
 type User struct {
 	Login    string `json:"login"`
@@ -41,61 +41,63 @@ func newUser() *User {
 }
 
 func NewRouter(db *pgx.Conn, cfg config.Config) *chi.Mux {
-	// r.Groupe почитать что такое для реализации SOLID midlleware
 	r := chi.NewRouter()
 
-	r.Route("/api/user", func(r chi.Router) {
-		r.Post("/register", registerHandler(db, cfg.PepperKey, cfg.SecretKey))
-		r.Post("/login", loginHandler(db, cfg.PepperKey, cfg.SecretKey))
-		r.Post("/orders", authMiddleware(loadOrderNumHandler(db), cfg.SecretKey))
-		r.Get("/orders", authMiddleware(getOrderList(db), cfg.SecretKey))
+	r.Group(func(r chi.Router) {
+		r.Post("/api/user/register", registerHandler(db, cfg.PepperKey, cfg.SecretKey))
+		r.Post("/api/user/login", loginHandler(db, cfg.PepperKey, cfg.SecretKey))
+	})
 
-		r.Route("/balance", func(r chi.Router) {
-			r.Get("/", authMiddleware(getCurBalance(db), cfg.SecretKey))
-			r.Get("/withdraw", authMiddleware(withdrawReqHandler(db), cfg.SecretKey))
-		})
+	r.Group(func(r chi.Router) {
+		r.Use(authMiddleware(cfg.SecretKey))
 
-		r.Get("/withdrawals", authMiddleware(getWithdrawList(db), cfg.SecretKey))
+		r.Post("/api/user/orders", loadOrderNumHandler(db))
+		r.Get("/api/user/orders", getOrderList(db))
+		r.Get("/api/user/balance", getCurBalance(db))
+		r.Get("/api/user/withdrawals", withdrawReqHandler(db))
+		r.Post("/api/user/balance/withdraw", withdrawReqHandler(db))
 	})
 
 	return r
 }
 
-func authMiddleware(next http.HandlerFunc, key string) http.HandlerFunc {
-	return func(rw http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("token")
-		if err != nil {
-			http.Error(rw, "missing token", http.StatusUnauthorized)
-			return
-		}
-		tokenString := cookie.Value
-
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
-			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+func authMiddleware(key string) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+			cookie, err := r.Cookie("token")
+			if err != nil {
+				http.Error(rw, "missing token", http.StatusUnauthorized)
+				return
 			}
-			return []byte(key), nil
+			tokenString := cookie.Value
+
+			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
+				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+					return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+				}
+				return []byte(key), nil
+			})
+			if err != nil || !token.Valid {
+				http.Error(rw, "invalid token", http.StatusUnauthorized)
+				return
+			}
+
+			claims, ok := token.Claims.(jwt.MapClaims)
+			if !ok {
+				http.Error(rw, "invalid token claims", http.StatusUnauthorized)
+				return
+			}
+
+			if userIDf, ok := claims["user_id"].(float64); ok {
+				ctx := context.WithValue(r.Context(), userKey, strconv.Itoa(int(userIDf)))
+				r = r.WithContext(ctx)
+			} else {
+				http.Error(rw, "invalid user_id claim", http.StatusUnauthorized)
+				return
+			}
+
+			next.ServeHTTP(rw, r)
 		})
-		if err != nil || !token.Valid {
-			http.Error(rw, "invalid token", http.StatusUnauthorized)
-			return
-		}
-
-		claims, ok := token.Claims.(jwt.MapClaims)
-		if !ok {
-			http.Error(rw, "invalid token claims", http.StatusUnauthorized)
-			return
-		}
-
-		if userIDf, ok := claims["user_id"].(float64); ok {
-			ctx := context.WithValue(r.Context(), userKey, strconv.Itoa(int(userIDf)))
-			r = r.WithContext(ctx)
-		} else {
-			http.Error(rw, "invalid user_id claim", http.StatusUnauthorized)
-			return
-		}
-
-		next.ServeHTTP(rw, r)
 	}
 }
 

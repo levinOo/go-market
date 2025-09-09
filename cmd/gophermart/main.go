@@ -18,5 +18,4 @@ func run() error {
 	cfg := config.GetConfig()
 
 	return service.Serve(cfg)
-
 }
