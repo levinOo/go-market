@@ -258,7 +258,8 @@ func loadOrderNumHandler(conn *pgx.Conn) http.HandlerFunc {
 
 		receivedUserID, err := db.CheckUniqOrder(orderNum, conn)
 		if err != nil {
-			http.Error(rw, "bad request", http.StatusBadRequest)
+			log.Printf("не удалось получить userId из бд: %v", err)
+			http.Error(rw, "internal server error", http.StatusInternalServerError)
 			return
 		}
 
@@ -266,7 +267,8 @@ func loadOrderNumHandler(conn *pgx.Conn) http.HandlerFunc {
 		case "":
 			err := db.AddOrder(orderNum, userID, conn)
 			if err != nil {
-				http.Error(rw, "bad request", http.StatusBadRequest)
+				log.Printf("не удалось добавить заказа в orders: %v", err)
+				http.Error(rw, "internal server error", http.StatusInternalServerError)
 				return
 			}
 
@@ -394,6 +396,7 @@ func withdrawReqHandler(conn *pgx.Conn) http.HandlerFunc {
 		err = db.SuccessWithdraw(conn, userID, w.Order, w.Sum)
 		if err != nil {
 			if errors.Is(err, db.ErrInsufficientBalance) {
+				log.Printf("на счету недостаточно средств: %v", err)
 				http.Error(rw, "на счету недостаточно средств", http.StatusPaymentRequired)
 				return
 			}
