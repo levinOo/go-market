@@ -25,7 +25,7 @@ import (
 
 type ctxKey string
 
-const userKey ctxKey = "user_id"
+const userContextKey ctxKey = "user_id"
 
 type User struct {
 	Login    string `json:"login"`
@@ -96,7 +96,7 @@ func authMiddleware(key string) func(next http.Handler) http.Handler {
 			}
 
 			if userIDf, ok := claims["user_id"].(float64); ok {
-				ctx := context.WithValue(r.Context(), userKey, strconv.Itoa(int(userIDf)))
+				ctx := context.WithValue(r.Context(), userContextKey, strconv.Itoa(int(userIDf)))
 				r = r.WithContext(ctx)
 			} else {
 				http.Error(rw, "invalid user_id claim", http.StatusUnauthorized)
@@ -235,8 +235,9 @@ func loginHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Handl
 
 func loadOrderNumHandler(conn *pgx.Conn) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value("user_id").(string)
+		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
+			log.Printf("не удалось получить userID: %v", userID)
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -294,7 +295,7 @@ func loadOrderNumHandler(conn *pgx.Conn) http.HandlerFunc {
 
 func getOrderList(conn *pgx.Conn) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(userKey).(string)
+		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
@@ -334,7 +335,7 @@ func getOrderList(conn *pgx.Conn) http.HandlerFunc {
 
 func getCurBalance(conn *pgx.Conn) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value("user_id").(string)
+		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
@@ -361,7 +362,7 @@ func getCurBalance(conn *pgx.Conn) http.HandlerFunc {
 func withdrawReqHandler(conn *pgx.Conn) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		var w WithdrawModel
-		userID, ok := r.Context().Value("user_id").(string)
+		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
@@ -401,7 +402,7 @@ func withdrawReqHandler(conn *pgx.Conn) http.HandlerFunc {
 
 func getWithdrawList(conn *pgx.Conn) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value("user_id").(string)
+		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
