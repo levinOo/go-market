@@ -33,8 +33,8 @@ type User struct {
 }
 
 type WithdrawModel struct {
-	Order string `json:"order"`
-	Sum   string `json:"sum"`
+	Order string  `json:"order"`
+	Sum   float64 `json:"sum"`
 }
 
 func newUser() *User {
@@ -298,37 +298,45 @@ func getOrderList(conn *pgx.Conn) http.HandlerFunc {
 		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
-			http.Error(rw, "unauthorized", http.StatusUnauthorized)
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(rw).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
 
 		orders, err := db.GetOrdersList(conn, userID)
 		if err != nil {
 			log.Printf("couldn't get order list: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(rw).Encode(map[string]string{"error": "internal server error"})
 			return
 		}
+
+		rw.Header().Set("Content-Type", "application/json")
 
 		if len(orders) == 0 {
-			http.Error(rw, "нет данных для ответа", http.StatusNoContent)
+			rw.WriteHeader(http.StatusNoContent)
 			return
 		}
 
-		jsonData, err := json.MarshalIndent(orders, "", "    ")
-		if err != nil {
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
-			return
-		}
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			rw.Header().Set("Content-Encoding", "gzip")
+			rw.WriteHeader(http.StatusOK)
 
-		rw.Header().Set("Content-Encoding", "gzip")
-		rw.WriteHeader(http.StatusOK)
+			gz := gzip.NewWriter(rw)
+			defer gz.Close()
 
-		gz := gzip.NewWriter(rw)
-		defer gz.Close()
-		_, err = gz.Write(jsonData)
-		if err != nil {
-			http.Error(rw, "internal serer error", http.StatusInternalServerError)
-			return
+			if err := json.NewEncoder(gz).Encode(orders); err != nil {
+				log.Printf("failed to encode gzipped response: %v", err)
+				return
+			}
+		} else {
+			rw.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(rw).Encode(orders); err != nil {
+				log.Printf("failed to encode response: %v", err)
+				return
+			}
 		}
 	}
 }

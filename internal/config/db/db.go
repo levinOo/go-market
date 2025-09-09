@@ -256,7 +256,7 @@ func GetUserBalance(conn *pgx.Conn, userID string) (UserBalance, error) {
 
 // ____________________Запрос на списание средств:
 
-func SuccessWithdraw(conn *pgx.Conn, userID, orderNum, amount string) error {
+func SuccessWithdraw(conn *pgx.Conn, userID, orderNum string, amount float64) error {
 	res, err := conn.Exec(context.Background(), `
         UPDATE balance
         SET current = current - $1
