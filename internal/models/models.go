@@ -37,6 +37,11 @@ func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string
 		}
 		defer resp.Body.Close()
 
+		if resp.StatusCode == http.StatusNoContent {
+			time.Sleep(time.Second)
+			return
+		}
+
 		data, err := io.ReadAll(resp.Body)
 		if err != nil {
 			log.Printf("%v", err)
