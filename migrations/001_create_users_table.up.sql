@@ -5,22 +5,22 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 CREATE TABLE IF NOT EXISTS orders (
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    order_number INTEGER NOT NULL UNIQUE,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    order_number BIGINT NOT NULL UNIQUE,
     status TEXT DEFAULT 'NEW',
     accrual NUMERIC,
     uploaded_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS balance (
-    user_id INTEGER PRIMARY KEY REFERENCES users(id),
+    user_id BIGINT PRIMARY KEY REFERENCES users(id),
     current NUMERIC DEFAULT 0,
     withdraw NUMERIC DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS withdraw (
-    user_id INTEGER NOT NULL REFERENCES users(id),
-    order_number INTEGER NOT NULL,
+    user_id BIGINT NOT NULL REFERENCES users(id),
+    order_number BIGINT NOT NULL,
     amount NUMERIC,
     processed_at TIMESTAMP
 );
