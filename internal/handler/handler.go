@@ -415,18 +415,14 @@ func getWithdrawList(conn *pgxpool.Pool) http.HandlerFunc {
 		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
-			rw.Header().Set("Content-Type", "application/json")
-			rw.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(rw).Encode(map[string]string{"error": "unauthorized"})
+			http.Error(rw, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
 
 		withdraws, err := db.GetWitthdrawsList(conn, userID)
 		if err != nil {
 			log.Printf("couldn't get withdraw list: %v", err)
-			rw.Header().Set("Content-Type", "application/json")
-			rw.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(rw).Encode(map[string]string{"error": "internal server error"})
+			http.Error(rw, `{"error":"internal server error"}`, http.StatusInternalServerError)
 			return
 		}
 
@@ -436,26 +432,20 @@ func getWithdrawList(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		rw.Header().Set("Content-Encoding", "gzip")
-		rw.WriteHeader(http.StatusOK)
+		rw.Header().Set("Content-Type", "application/json")
 
 		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 			rw.Header().Set("Content-Encoding", "gzip")
-			rw.WriteHeader(http.StatusOK)
-
 			gz := gzip.NewWriter(rw)
 			defer gz.Close()
-
 			if err := json.NewEncoder(gz).Encode(withdraws); err != nil {
 				log.Printf("failed to encode gzipped response: %v", err)
-				return
 			}
-		} else {
-			rw.WriteHeader(http.StatusOK)
-			if err := json.NewEncoder(rw).Encode(withdraws); err != nil {
-				log.Printf("failed to encode response: %v", err)
-				return
-			}
+			return
+		}
+
+		if err := json.NewEncoder(rw).Encode(withdraws); err != nil {
+			log.Printf("failed to encode response: %v", err)
 		}
 	}
 }
