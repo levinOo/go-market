@@ -2,6 +2,7 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -12,23 +13,25 @@ import (
 )
 
 type AccrualModel struct {
-	Order   int     `json:"order"`
+	Order   string  `json:"order"`
 	Status  string  `json:"status"`
 	Accrual float64 `json:"accrual,omitempty"`
 }
 
-func AccrualRequest(conn *pgx.Conn, orderNum int, userID string) {
+func AccrualRequest(conn *pgx.Conn, orderNum int, userID, accrualAddr string) {
 	var o AccrualModel
 	status := "PROCESSING"
 
-	err := db.UpdateOrderStatus(conn, status, o.Accrual, orderNum, userID) // ?- o.Accrual
+	err := db.UpdateOrderStatus(conn, status, o.Accrual, orderNum, userID)
 	if err != nil {
 		log.Printf("err to update order status: %v", err)
 	}
 
+	uri := fmt.Sprintf("http://%s/api/orders/%v", accrualAddr, orderNum)
+
 	// реализовать кол-во повторений // retryable 1 3 5 секунд
 	for i := 0; i < 3; i++ {
-		resp, err := http.Get("http://localhost:8080/api/user/orders")
+		resp, err := http.Get(uri)
 		if err != nil {
 			log.Printf("%v", err)
 		}

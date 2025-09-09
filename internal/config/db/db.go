@@ -270,6 +270,15 @@ func SuccessWithdraw(conn *pgx.Conn, userID, orderNum string, amount float64) er
 		return ErrInsufficientBalance
 	}
 
+	_, err = conn.Exec(context.Background(), `
+		UPDATE balance
+    	SET withdraw = withdraw + $1
+   		WHERE user_id = $2
+		`, amount, userID)
+	if err != nil {
+		return err
+	}
+
 	processedAt := time.Now().Format(time.RFC3339)
 
 	_, err = conn.Exec(context.Background(), `
