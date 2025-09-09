@@ -19,6 +19,7 @@ import (
 	"github.com/levinOo/go-market/internal/config"
 	"github.com/levinOo/go-market/internal/config/db"
 	"github.com/levinOo/go-market/internal/models"
+	"github.com/phedde/luhn-algorithm"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -253,6 +254,13 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFun
 		if err != nil {
 			log.Printf("failed to convert string to int: %v", err)
 			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			return
+		}
+
+		ok = luhn.IsValid(int64(orderNum))
+		if !ok {
+			log.Printf("order number is not valid: %v", err)
+			http.Error(rw, "internal server error", http.StatusUnprocessableEntity)
 			return
 		}
 
