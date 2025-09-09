@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -64,12 +65,18 @@ func NewRouter(db *pgx.Conn, cfg config.Config) *chi.Mux {
 func authMiddleware(key string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-			cookie, err := r.Cookie("token")
+			cookie, err := r.Cookie("Authorization")
 			if err != nil {
 				http.Error(rw, "missing token", http.StatusUnauthorized)
 				return
 			}
+
 			tokenString := cookie.Value
+			tokenString = strings.TrimSpace(tokenString)
+			if tokenString == "" {
+				http.Error(rw, "empty token", http.StatusUnauthorized)
+				return
+			}
 
 			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
@@ -152,11 +159,13 @@ func registerHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Ha
 		}
 
 		http.SetCookie(rw, &http.Cookie{
-			Name:     "token",
+			Name:     "Authorization",
 			Value:    token,
 			Path:     "/",
-			HttpOnly: true,
+			MaxAge:   3600,
+			Domain:   "",
 			Secure:   false,
+			HttpOnly: true,
 		})
 		rw.WriteHeader(http.StatusOK)
 	}
