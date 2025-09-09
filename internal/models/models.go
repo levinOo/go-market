@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/levinOo/go-market/internal/config/db"
 )
 
@@ -18,7 +18,7 @@ type AccrualModel struct {
 	Accrual float64 `json:"accrual,omitempty"`
 }
 
-func AccrualRequest(conn *pgx.Conn, orderNum int, userID, accrualAddr string) {
+func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string) {
 	var o AccrualModel
 	status := "PROCESSING"
 

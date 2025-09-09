@@ -9,7 +9,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/levinOo/go-market/internal/config"
 	"github.com/levinOo/go-market/internal/config/db"
 	"github.com/levinOo/go-market/internal/handler"
@@ -46,7 +46,7 @@ func Serve(cfg config.Config) error {
 	return shutdownServer(srv, dbConn, serverErr)
 }
 
-func shutdownServer(srv *http.Server, db *pgx.Conn, serverErr <-chan error) error {
+func shutdownServer(srv *http.Server, db *pgxpool.Pool, serverErr <-chan error) error {
 	shutdown, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
@@ -66,11 +66,7 @@ func shutdownServer(srv *http.Server, db *pgx.Conn, serverErr <-chan error) erro
 			return err
 		}
 
-		err = db.Close(context.Background())
-		if err != nil {
-			log.Printf("Error closing database connection: %v", err)
-			return err
-		}
+		db.Close()
 
 		log.Println("Server shutdown complete")
 		return nil

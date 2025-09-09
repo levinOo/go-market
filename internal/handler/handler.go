@@ -15,7 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/levinOo/go-market/internal/config"
 	"github.com/levinOo/go-market/internal/config/db"
 	"github.com/levinOo/go-market/internal/models"
@@ -40,7 +40,7 @@ func newUser() *User {
 	return &User{}
 }
 
-func NewRouter(db *pgx.Conn, cfg config.Config) *chi.Mux {
+func NewRouter(db *pgxpool.Pool, cfg config.Config) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Group(func(r chi.Router) {
@@ -107,7 +107,7 @@ func authMiddleware(key string) func(next http.Handler) http.Handler {
 	}
 }
 
-func registerHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.HandlerFunc {
+func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		u := newUser()
 
@@ -170,7 +170,7 @@ func registerHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Ha
 	}
 }
 
-func loginHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.HandlerFunc {
+func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		u := newUser()
 
@@ -232,7 +232,7 @@ func loginHandler(conn *pgx.Conn, pepperKey string, secretKey string) http.Handl
 	}
 }
 
-func loadOrderNumHandler(conn *pgx.Conn, accrualAddr string) http.HandlerFunc {
+func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
@@ -287,7 +287,7 @@ func loadOrderNumHandler(conn *pgx.Conn, accrualAddr string) http.HandlerFunc {
 	}
 }
 
-func getOrderList(conn *pgx.Conn) http.HandlerFunc {
+func getOrderList(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
@@ -335,7 +335,7 @@ func getOrderList(conn *pgx.Conn) http.HandlerFunc {
 	}
 }
 
-func getCurBalance(conn *pgx.Conn) http.HandlerFunc {
+func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
@@ -368,7 +368,7 @@ func getCurBalance(conn *pgx.Conn) http.HandlerFunc {
 	}
 }
 
-func withdrawReqHandler(conn *pgx.Conn) http.HandlerFunc {
+func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		var w WithdrawModel
 		userID, ok := r.Context().Value(userContextKey).(string)
@@ -410,7 +410,7 @@ func withdrawReqHandler(conn *pgx.Conn) http.HandlerFunc {
 	}
 }
 
-func getWithdrawList(conn *pgx.Conn) http.HandlerFunc {
+func getWithdrawList(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {

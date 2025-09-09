@@ -10,6 +10,7 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var (
@@ -36,9 +37,9 @@ type UserBalance struct {
 	Withdraw float64 `json:"withdraw"`
 }
 
-func ConnectDB(DBAddr string) (*pgx.Conn, error) {
+func ConnectDB(DBAddr string) (*pgxpool.Pool, error) {
 
-	conn, err := pgx.Connect(context.Background(), DBAddr)
+	conn, err := pgxpool.New(context.Background(), DBAddr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to db: %w", err)
 	}
@@ -66,7 +67,7 @@ func RunMigrations(connString string) error {
 
 // ____________________Регистрация пользователя:
 
-func RegisterReq(login string, password string, conn *pgx.Conn) (int, error) {
+func RegisterReq(login string, password string, conn *pgxpool.Pool) (int, error) {
 	var userID int
 
 	err := conn.QueryRow(context.Background(), `
@@ -86,7 +87,7 @@ func RegisterReq(login string, password string, conn *pgx.Conn) (int, error) {
 	return newBalanceRecord(conn, userID)
 }
 
-func newBalanceRecord(conn *pgx.Conn, userID int) (int, error) {
+func newBalanceRecord(conn *pgxpool.Pool, userID int) (int, error) {
 	_, err := conn.Exec(context.Background(), `
         INSERT INTO balance (user_id)
         VALUES ($1);
@@ -99,7 +100,7 @@ func newBalanceRecord(conn *pgx.Conn, userID int) (int, error) {
 
 // ____________________Аутентификация пользователя:
 
-func AuthReq(conn *pgx.Conn, login string) (int, string, error) {
+func AuthReq(conn *pgxpool.Pool, login string) (int, string, error) {
 	var (
 		password string
 		userID   int
@@ -135,7 +136,7 @@ func GetPassword(login string, conn *pgx.Conn) (string, error) {
 
 // ____________________Загрузка номера заказа:
 
-func CheckUniqOrder(orderNum int, conn *pgx.Conn) (string, error) {
+func CheckUniqOrder(orderNum int, conn *pgxpool.Pool) (string, error) {
 	var receivedUserID string
 
 	err := conn.QueryRow(context.Background(), `
@@ -154,7 +155,7 @@ func CheckUniqOrder(orderNum int, conn *pgx.Conn) (string, error) {
 	return receivedUserID, nil
 }
 
-func AddOrder(orderNum int, userID string, conn *pgx.Conn) error {
+func AddOrder(orderNum int, userID string, conn *pgxpool.Pool) error {
 	uploadedAt := time.Now().Format(time.RFC3339)
 	status := "NEW"
 
@@ -167,7 +168,7 @@ func AddOrder(orderNum int, userID string, conn *pgx.Conn) error {
 	return err
 }
 
-func UpdateOrderStatus(conn *pgx.Conn, status string, accrual float64, orderNum int, userID string) error {
+func UpdateOrderStatus(conn *pgxpool.Pool, status string, accrual float64, orderNum int, userID string) error {
 	switch status {
 	case "PROCESSED":
 		_, err := conn.Exec(context.Background(), `
@@ -206,7 +207,7 @@ func UpdateOrderStatus(conn *pgx.Conn, status string, accrual float64, orderNum 
 
 // ____________________Получение списка загруженных номеров заказов:
 
-func GetOrdersList(conn *pgx.Conn, userID string) ([]Order, error) {
+func GetOrdersList(conn *pgxpool.Pool, userID string) ([]Order, error) {
 	var orders []Order
 
 	rows, err := conn.Query(context.Background(), `
@@ -238,7 +239,7 @@ func GetOrdersList(conn *pgx.Conn, userID string) ([]Order, error) {
 
 // ____________________Получение текущего баланса пользователя:
 
-func GetUserBalance(conn *pgx.Conn, userID string) (UserBalance, error) {
+func GetUserBalance(conn *pgxpool.Pool, userID string) (UserBalance, error) {
 	var u UserBalance
 
 	err := conn.QueryRow(context.Background(), `
@@ -256,7 +257,7 @@ func GetUserBalance(conn *pgx.Conn, userID string) (UserBalance, error) {
 
 // ____________________Запрос на списание средств:
 
-func SuccessWithdraw(conn *pgx.Conn, userID, orderNum string, amount float64) error {
+func SuccessWithdraw(conn *pgxpool.Pool, userID, orderNum string, amount float64) error {
 	res, err := conn.Exec(context.Background(), `
         UPDATE balance
         SET current = current - $1
@@ -294,7 +295,7 @@ func SuccessWithdraw(conn *pgx.Conn, userID, orderNum string, amount float64) er
 
 // ____________________Получение информации о выводе средств:
 
-func GetWitthdrawsList(conn *pgx.Conn, userID string) ([]Withdraw, error) {
+func GetWitthdrawsList(conn *pgxpool.Pool, userID string) ([]Withdraw, error) {
 	var withdraw []Withdraw
 
 	rows, err := conn.Query(context.Background(), `

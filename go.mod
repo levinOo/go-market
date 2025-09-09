@@ -2,12 +2,14 @@ module github.com/levinOo/go-market
 
 go 1.24.4
 
-require github.com/jackc/pgx/v5 v5.7.5
+require github.com/jackc/pgx/v5 v5.7.6
 
 require (
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.1 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/lib/pq v1.10.9 // indirect
+	golang.org/x/sync v0.13.0 // indirect
 )
 
 require (
