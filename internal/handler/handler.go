@@ -19,7 +19,6 @@ import (
 	"github.com/levinOo/go-market/internal/config"
 	"github.com/levinOo/go-market/internal/config/db"
 	"github.com/levinOo/go-market/internal/models"
-	"github.com/theplant/luhn"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -257,13 +256,6 @@ func loadOrderNumHandler(conn *pgx.Conn) http.HandlerFunc {
 			return
 		}
 
-		ok = luhn.Valid(orderNum)
-		if !ok {
-			log.Printf("order number is not valid: %v", err)
-			http.Error(rw, "internal server error", http.StatusUnprocessableEntity)
-			return
-		}
-
 		receivedUserID, err := db.CheckUniqOrder(orderNum, conn)
 		if err != nil {
 			http.Error(rw, "bad request", http.StatusBadRequest)
@@ -346,15 +338,22 @@ func getCurBalance(conn *pgx.Conn) http.HandlerFunc {
 		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
-			http.Error(rw, "unauthorized", http.StatusUnauthorized)
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(rw).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
 
 		balance, err := db.GetUserBalance(conn, userID)
 		if err != nil {
-			http.Error(rw, "bad request", http.StatusBadRequest)
+			log.Printf("couldn't get current list: %v", err)
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(rw).Encode(map[string]string{"error": "internal server error"})
 			return
 		}
+
+		rw.Header().Set("Content-Type", "application/json")
 
 		jsonData, err := json.MarshalIndent(balance, "", "    ")
 		if err != nil {
@@ -413,37 +412,47 @@ func getWithdrawList(conn *pgx.Conn) http.HandlerFunc {
 		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
-			http.Error(rw, "unauthorized", http.StatusUnauthorized)
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(rw).Encode(map[string]string{"error": "unauthorized"})
 			return
 		}
 
 		withdraws, err := db.GetWitthdrawsList(conn, userID)
 		if err != nil {
 			log.Printf("couldn't get withdraw list: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			rw.Header().Set("Content-Type", "application/json")
+			rw.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(rw).Encode(map[string]string{"error": "internal server error"})
 			return
 		}
 
 		if len(withdraws) == 0 {
-			http.Error(rw, "нет ни одного списания", http.StatusNoContent)
-			return
-		}
-
-		jsonData, err := json.MarshalIndent(withdraws, "", "    ")
-		if err != nil {
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			log.Printf("нет ни одного списания")
+			rw.WriteHeader(http.StatusNoContent)
 			return
 		}
 
 		rw.Header().Set("Content-Encoding", "gzip")
 		rw.WriteHeader(http.StatusOK)
 
-		gz := gzip.NewWriter(rw)
-		defer gz.Close()
-		_, err = gz.Write(jsonData)
-		if err != nil {
-			http.Error(rw, "internal serer error", http.StatusInternalServerError)
-			return
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			rw.Header().Set("Content-Encoding", "gzip")
+			rw.WriteHeader(http.StatusOK)
+
+			gz := gzip.NewWriter(rw)
+			defer gz.Close()
+
+			if err := json.NewEncoder(gz).Encode(withdraws); err != nil {
+				log.Printf("failed to encode gzipped response: %v", err)
+				return
+			}
+		} else {
+			rw.WriteHeader(http.StatusOK)
+			if err := json.NewEncoder(rw).Encode(withdraws); err != nil {
+				log.Printf("failed to encode response: %v", err)
+				return
+			}
 		}
 	}
 }
