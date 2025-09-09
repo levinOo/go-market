@@ -401,6 +401,19 @@ func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
+		orderNum, err := strconv.Atoi(w.Order)
+		if err != nil {
+			log.Printf("failed to convert string to int: %v", err)
+			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			return
+		}
+		ok = luhn.IsValid(int64(orderNum))
+		if !ok {
+			log.Printf("order number is not valid: %v", err)
+			http.Error(rw, "internal server error", http.StatusUnprocessableEntity)
+			return
+		}
+
 		err = db.SuccessWithdraw(conn, userID, w.Order, w.Sum)
 		if err != nil {
 			if errors.Is(err, db.ErrInsufficientBalance) {
