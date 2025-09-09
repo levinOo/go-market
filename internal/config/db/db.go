@@ -21,7 +21,7 @@ var (
 type Order struct {
 	Number   int       `json:"number"`
 	Status   string    `json:"status"`
-	Accrual  *int      `json:"accrual,omitempty"`
+	Accrual  *float64  `json:"accrual,omitempty"`
 	Uploaded time.Time `json:"uploaded_at"`
 }
 

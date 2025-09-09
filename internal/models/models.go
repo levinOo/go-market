@@ -28,7 +28,7 @@ func AccrualRequest(conn *pgx.Conn, orderNum int, userID string) {
 
 	// реализовать кол-во повторений // retryable 1 3 5 секунд
 	for i := 0; i < 3; i++ {
-		resp, err := http.Get("http://localhost:8080/api/user/orders") // обработать получаемые ответы
+		resp, err := http.Get("http://localhost:8080/api/user/orders")
 		if err != nil {
 			log.Printf("%v", err)
 		}
