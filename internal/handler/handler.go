@@ -55,7 +55,7 @@ func NewRouter(db *pgx.Conn, cfg config.Config) *chi.Mux {
 		r.Post("/api/user/orders", loadOrderNumHandler(db))
 		r.Get("/api/user/orders", getOrderList(db))
 		r.Get("/api/user/balance", getCurBalance(db))
-		r.Get("/api/user/withdrawals", withdrawReqHandler(db))
+		r.Get("/api/user/withdrawals", getWithdrawList(db))
 		r.Post("/api/user/balance/withdraw", withdrawReqHandler(db))
 	})
 
@@ -296,6 +296,7 @@ func getOrderList(conn *pgx.Conn) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value(userKey).(string)
 		if !ok || userID == "" {
+			log.Printf("не удалось получить userID: %v", userID)
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -335,6 +336,7 @@ func getCurBalance(conn *pgx.Conn) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value("user_id").(string)
 		if !ok || userID == "" {
+			log.Printf("не удалось получить userID: %v", userID)
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -361,6 +363,7 @@ func withdrawReqHandler(conn *pgx.Conn) http.HandlerFunc {
 		var w WithdrawModel
 		userID, ok := r.Context().Value("user_id").(string)
 		if !ok || userID == "" {
+			log.Printf("не удалось получить userID: %v", userID)
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
 			return
 		}
@@ -400,6 +403,7 @@ func getWithdrawList(conn *pgx.Conn) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, ok := r.Context().Value("user_id").(string)
 		if !ok || userID == "" {
+			log.Printf("не удалось получить userID: %v", userID)
 			http.Error(rw, "unauthorized", http.StatusUnauthorized)
 			return
 		}
