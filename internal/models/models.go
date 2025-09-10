@@ -29,7 +29,6 @@ func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string
 
 	uri := fmt.Sprintf("%s/api/orders/%v", accrualAddr, orderNum)
 
-	// реализовать кол-во повторений // retryable 1 3 5 секунд
 	for i := 0; i < 3; i++ {
 		resp, err := http.Get(uri)
 		if err != nil {
@@ -37,26 +36,35 @@ func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string
 		}
 		defer resp.Body.Close()
 
-		if resp.StatusCode == http.StatusNoContent {
-			time.Sleep(time.Second)
+		switch resp.StatusCode {
+		case http.StatusNoContent:
+			log.Printf("сервис accrual прислал код 204: заказ не зарегистрирован в системе расчёта.")
 			return
-		}
+		case http.StatusTooManyRequests:
+			log.Printf("сервис accrual прислал код 429: превышено количество запросов к сервису.")
+		default:
+			if resp.StatusCode == http.StatusNoContent {
+				time.Sleep(time.Second)
+				return
+			}
 
-		data, err := io.ReadAll(resp.Body)
-		if err != nil {
-			log.Printf("%v", err)
-		}
+			data, err := io.ReadAll(resp.Body)
+			if err != nil {
+				log.Printf("%v", err)
+			}
 
-		err = json.Unmarshal(data, &o)
-		if err != nil {
-			log.Printf("%v", err)
-		}
+			err = json.Unmarshal(data, &o)
+			if err != nil {
+				log.Printf("%v", err)
+			}
 
-		if o.Status == "INVALID" || o.Status == "PROCESSED" {
-			db.UpdateOrderStatus(conn, o.Status, o.Accrual, orderNum, userID)
-			break
-		} else {
-			time.Sleep(time.Second)
+			if o.Status == "INVALID" || o.Status == "PROCESSED" {
+				db.UpdateOrderStatus(conn, o.Status, o.Accrual, orderNum, userID)
+
+				return
+			} else {
+				time.Sleep(time.Second)
+			}
 		}
 	}
 }

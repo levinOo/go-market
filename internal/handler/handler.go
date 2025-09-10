@@ -115,7 +115,7 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Printf("failed to read body: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
@@ -135,7 +135,7 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 		password, err := createHashPassword(u.Password, pepperKey)
 		if err != nil {
 			log.Printf("bcrypt hashing failed: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
@@ -147,14 +147,14 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 				return
 			}
 			log.Printf("failed to register user: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
 		token, err := buildJWT(userID, secretKey)
 		if err != nil {
 			log.Printf("failed to generate token: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
@@ -164,8 +164,8 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 			Path:     "/",
 			MaxAge:   3600,
 			Domain:   "",
-			Secure:   false,
 			HttpOnly: true,
+			Secure:   false,
 		})
 		rw.WriteHeader(http.StatusOK)
 	}
@@ -178,7 +178,7 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Printf("failed to read body: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 		defer r.Body.Close()
@@ -204,7 +204,7 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 				return
 			}
 			log.Printf("failed to get password: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
@@ -218,12 +218,12 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 		token, err := buildJWT(userID, secretKey)
 		if err != nil {
 			log.Printf("failed to generate token: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
 		http.SetCookie(rw, &http.Cookie{
-			Name:     "token",
+			Name:     "Authorization",
 			Value:    token,
 			Path:     "/",
 			HttpOnly: true,
@@ -301,8 +301,7 @@ func getOrderList(conn *pgxpool.Pool) http.HandlerFunc {
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
 			rw.Header().Set("Content-Type", "application/json")
-			rw.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(rw).Encode(map[string]string{"error": "unauthorized"})
+			http.Error(rw, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
 
@@ -310,14 +309,14 @@ func getOrderList(conn *pgxpool.Pool) http.HandlerFunc {
 		if err != nil {
 			log.Printf("couldn't get order list: %v", err)
 			rw.Header().Set("Content-Type", "application/json")
-			rw.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(rw).Encode(map[string]string{"error": "internal server error"})
+			http.Error(rw, `{"error":"Internal Server Error"}`, http.StatusInternalServerError)
 			return
 		}
 
 		rw.Header().Set("Content-Type", "application/json")
 
 		if len(orders) == 0 {
+			log.Printf("orders is empty")
 			rw.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -350,7 +349,7 @@ func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 			log.Printf("не удалось получить userID: %v", userID)
 			rw.Header().Set("Content-Type", "application/json")
 			rw.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(rw).Encode(map[string]string{"error": "unauthorized"})
+			json.NewEncoder(rw).Encode(map[string]string{"error": http.StatusText(http.StatusUnauthorized)})
 			return
 		}
 
@@ -359,7 +358,7 @@ func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 			log.Printf("couldn't get current list: %v", err)
 			rw.Header().Set("Content-Type", "application/json")
 			rw.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(rw).Encode(map[string]string{"error": "internal server error"})
+			json.NewEncoder(rw).Encode(map[string]string{"error": http.StatusText(http.StatusInternalServerError)})
 			return
 		}
 
@@ -367,7 +366,8 @@ func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 
 		jsonData, err := json.MarshalIndent(balance, "", "    ")
 		if err != nil {
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			log.Printf("failed to marshal balance response: %v", err)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
@@ -382,14 +382,14 @@ func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 		userID, ok := r.Context().Value(userContextKey).(string)
 		if !ok || userID == "" {
 			log.Printf("не удалось получить userID: %v", userID)
-			http.Error(rw, "unauthorized", http.StatusUnauthorized)
+			http.Error(rw, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Printf("failed to read body: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 		defer r.Body.Close()
@@ -397,7 +397,7 @@ func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 		err = json.Unmarshal(body, &w)
 		if err != nil {
 			log.Printf("failed to read json: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
@@ -409,7 +409,7 @@ func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 				return
 			}
 			log.Printf("failed to process withdraw: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
