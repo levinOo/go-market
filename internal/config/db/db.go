@@ -14,9 +14,12 @@ import (
 )
 
 var (
-	ErrLoginExists         = errors.New("login already exists")
-	ErrUserNotExists       = errors.New("user not exists")
-	ErrInsufficientBalance = errors.New("insufficient balance")
+	ErrLoginExists           = errors.New("login already exists")
+	ErrUserNotExists         = errors.New("user not exists")
+	ErrInsufficientBalance   = errors.New("insufficient balance")
+	ErrInvalidPassword       = errors.New("invalid password")
+	ErrGetUserID             = errors.New("couldn't get the userID")
+	ErrUnUnprocessableEntity = errors.New("invalid order number")
 )
 
 type Order struct {
@@ -37,6 +40,7 @@ type UserBalance struct {
 	Withdraw float64 `json:"withdraw"`
 }
 
+// при не подключеении retry
 func ConnectDB(DBAddr string) (*pgxpool.Pool, error) {
 
 	conn, err := pgxpool.New(context.Background(), DBAddr)
@@ -84,18 +88,18 @@ func RegisterReq(login string, password string, conn *pgxpool.Pool) (int, error)
 		return 0, err
 	}
 
-	return newBalanceRecord(conn, userID)
+	return userID, nil
 }
 
-func newBalanceRecord(conn *pgxpool.Pool, userID int) (int, error) {
+func NewBalanceRecord(conn *pgxpool.Pool, userID int) error {
 	_, err := conn.Exec(context.Background(), `
         INSERT INTO balance (user_id)
         VALUES ($1);
     `, userID)
 	if err != nil {
-		return 0, err
+		return err
 	}
-	return userID, nil
+	return nil
 }
 
 // ____________________Аутентификация пользователя:
@@ -155,10 +159,7 @@ func CheckUniqOrder(orderNum int, conn *pgxpool.Pool) (string, error) {
 	return receivedUserID, nil
 }
 
-func AddOrder(orderNum int, userID string, conn *pgxpool.Pool) error {
-	uploadedAt := time.Now().Format(time.RFC3339)
-	status := "NEW"
-
+func AddOrder(conn *pgxpool.Pool, orderNum int, userID, status, uploadedAt string) error {
 	_, err := conn.Exec(
 		context.Background(),
 		`INSERT INTO orders (user_id, order_number, uploaded_at, status) VALUES ($1, $2, $3, $4)`,
@@ -168,38 +169,43 @@ func AddOrder(orderNum int, userID string, conn *pgxpool.Pool) error {
 	return err
 }
 
-func UpdateOrderStatus(conn *pgxpool.Pool, status string, accrual float64, orderNum int, userID string) error {
-	switch status {
-	case "PROCESSED":
-		_, err := conn.Exec(context.Background(), `
+func UpdateBalance(conn *pgxpool.Pool, accrual float64, userID string) error {
+	_, err := conn.Exec(context.Background(), `
+	UPDATE balance
+	SET current = current + $1
+	WHERE user_id = $2
+	`, accrual, userID)
+
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func UpdateProcessedStatus(conn *pgxpool.Pool, status string, accrual float64, orderNum int) error {
+	_, err := conn.Exec(context.Background(), `
 		UPDATE orders
 		SET status = $1, accrual = $2
 		WHERE order_number = $3
 		`, status, accrual, orderNum)
 
-		if err != nil {
-			return err
-		}
+	if err != nil {
+		return err
+	}
 
-		_, err = conn.Exec(context.Background(), `
-		UPDATE balance
-    	SET current = current + $1
-   		WHERE user_id = $2
-		`, accrual, userID)
-		if err != nil {
-			return err
-		}
+	return nil
+}
 
-	default:
-		_, err := conn.Exec(context.Background(), `
+func UpdateOrderStatus(conn *pgxpool.Pool, status string, orderNum int) error {
+	_, err := conn.Exec(context.Background(), `
 		UPDATE orders
 		SET status = $1
 		WHERE order_number = $2
-		`, status, orderNum)
+	`, status, orderNum)
 
-		if err != nil {
-			return err
-		}
+	if err != nil {
+		return err
 	}
 
 	return nil
@@ -257,7 +263,7 @@ func GetUserBalance(conn *pgxpool.Pool, userID string) (UserBalance, error) {
 
 // ____________________Запрос на списание средств:
 
-func SuccessWithdraw(conn *pgxpool.Pool, userID, orderNum string, amount float64) error {
+func TryWithdrawBalance(conn *pgxpool.Pool, amount float64, userID string) error {
 	res, err := conn.Exec(context.Background(), `
         UPDATE balance
         SET current = current - $1
@@ -271,7 +277,11 @@ func SuccessWithdraw(conn *pgxpool.Pool, userID, orderNum string, amount float64
 		return ErrInsufficientBalance
 	}
 
-	_, err = conn.Exec(context.Background(), `
+	return nil
+}
+
+func SumWithdrawBalance(conn *pgxpool.Pool, amount float64, userID string) error {
+	_, err := conn.Exec(context.Background(), `
 		UPDATE balance
     	SET withdraw = withdraw + $1
    		WHERE user_id = $2
@@ -280,9 +290,11 @@ func SuccessWithdraw(conn *pgxpool.Pool, userID, orderNum string, amount float64
 		return err
 	}
 
-	processedAt := time.Now().Format(time.RFC3339)
+	return nil
+}
 
-	_, err = conn.Exec(context.Background(), `
+func SuccessWithdraw(conn *pgxpool.Pool, userID, orderNum, processedAt string, amount float64) error {
+	_, err := conn.Exec(context.Background(), `
         INSERT INTO withdraw (user_id, order_number, amount, processed_at)
         VALUES ($1, $2, $3, $4)
     `, userID, orderNum, amount, processedAt)
@@ -302,6 +314,7 @@ func GetWitthdrawsList(conn *pgxpool.Pool, userID string) ([]Withdraw, error) {
 	SELECT order_number, amount, processed_at
 	FROM withdraw
 	WHERE user_id = $1
+	ORDER BY processed_at DESC
 	`, userID)
 
 	if err != nil {

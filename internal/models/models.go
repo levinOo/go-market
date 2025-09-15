@@ -20,17 +20,22 @@ type AccrualModel struct {
 	Accrual float64 `json:"accrual,omitempty"`
 }
 
+func newAccrualModel() *AccrualModel {
+	return &AccrualModel{}
+}
+
 var (
 	accrualMutex       sync.Mutex
 	accrualBlocked     bool
 	accrualUnblockTime time.Time
 )
 
-func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string) {
-	var o AccrualModel
+func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr, retryNum string) {
+	o := newAccrualModel()
+
 	status := "PROCESSING"
 
-	err := db.UpdateOrderStatus(conn, status, o.Accrual, orderNum, userID)
+	err := db.UpdateOrderStatus(conn, status, orderNum)
 	if err != nil {
 		log.Printf("err to update order status: %v", err)
 	}
@@ -80,11 +85,14 @@ func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string
 				continue
 			}
 
-			if o.Status == "INVALID" || o.Status == "PROCESSED" {
-				db.UpdateOrderStatus(conn, o.Status, o.Accrual, orderNum, userID)
-
+			switch o.Status {
+			case "PROCESSED":
+				db.UpdateProcessedStatus(conn, o.Status, o.Accrual, orderNum)
+				db.UpdateBalance(conn, o.Accrual, userID)
 				return
-			} else {
+			case "INVALID":
+				db.UpdateOrderStatus(conn, o.Status, orderNum)
+			default:
 				time.Sleep(time.Second)
 			}
 		}

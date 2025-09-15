@@ -32,13 +32,115 @@ type User struct {
 	Password string `json:"password"`
 }
 
-type WithdrawModel struct {
+type Withdraw struct {
 	Order string  `json:"order"`
 	Sum   float64 `json:"sum"`
 }
 
+func (u *User) Create(conn *pgxpool.Pool, secretKey, pepperKey string) (string, error) {
+	password, err := createHashPassword(u.Password, pepperKey)
+	if err != nil {
+		log.Printf("bcrypt hashing failed: %v", err)
+		return "", err
+	}
+
+	userID, err := db.RegisterReq(u.Login, string(password), conn)
+	if err != nil {
+		if errors.Is(err, db.ErrLoginExists) {
+			log.Printf("login already exists: %v", err)
+			return "", db.ErrLoginExists
+		}
+		log.Printf("failed to register user: %v", err)
+		return "", err
+	}
+
+	err = db.NewBalanceRecord(conn, userID)
+	if err != nil {
+		log.Printf("failed to create user balance: %v", err)
+		return "", err
+	}
+
+	token, err := buildJWT(userID, secretKey)
+	if err != nil {
+		log.Printf("failed to generate token: %v", err)
+		return "", err
+	}
+
+	return token, nil
+}
+
+func (u *User) Check(conn *pgxpool.Pool, pepperKey, secretKey string) (string, error) {
+	userID, receivedPassword, err := db.AuthReq(conn, u.Login)
+	if err != nil {
+		if errors.Is(err, db.ErrUserNotExists) {
+			log.Printf("unknown user: %v", err)
+			return "", db.ErrUserNotExists
+		}
+		log.Printf("failed to get password: %v", err)
+		return "", err
+	}
+
+	err = checkPassword(u.Password, pepperKey, receivedPassword)
+	if err != nil {
+		log.Printf("invalid password: %v", err)
+		return "", db.ErrInvalidPassword
+	}
+
+	token, err := buildJWT(userID, secretKey)
+	if err != nil {
+		log.Printf("failed to generate token: %v", err)
+		return "", err
+	}
+
+	return token, nil
+}
+
+func (w *Withdraw) Create(conn *pgxpool.Pool, userID string) error {
+	orderNum, err := strconv.Atoi(w.Order)
+	if err != nil {
+		log.Printf("failed to convert string to int: %v", err)
+		return err
+	}
+
+	ok := luhn.IsValid(int64(orderNum))
+	if !ok {
+		log.Printf("неверный номер заказа: %v", err)
+		return err
+	}
+
+	err = db.TryWithdrawBalance(conn, w.Sum, userID)
+	if err != nil {
+		if errors.Is(err, db.ErrInsufficientBalance) {
+			log.Printf("на счету недостаточно средств: %v", err)
+			return err
+		}
+		log.Printf("failed to process withdraw: %v", err)
+		return err
+	}
+
+	err = db.SumWithdrawBalance(conn, w.Sum, userID)
+	if err != nil {
+		log.Printf("failed to sum withdraw balance: %v", err)
+		return err
+	}
+
+	processedAt := time.Now().Format(time.RFC3339)
+
+	err = db.SuccessWithdraw(conn, userID, w.Order, processedAt, w.Sum)
+	if err != nil {
+		log.Printf("couldn't add withdrawal entry: %v", err)
+		return err
+	}
+
+	return nil
+}
+
 func newUser() *User {
 	return &User{}
+}
+
+func newWithdrawModel() *Withdraw {
+	return &Withdraw{}
 }
 
 func NewRouter(db *pgxpool.Pool, cfg config.Config) *chi.Mux {
@@ -52,7 +154,7 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config) *chi.Mux {
 	r.Group(func(r chi.Router) {
 		r.Use(authMiddleware(cfg.SecretKey))
 
-		r.Post("/api/user/orders", loadOrderNumHandler(db, cfg.SystemAddr))
+		r.Post("/api/user/orders", loadOrderNumHandler(db, cfg.SystemAddr, cfg.RetryNumber))
 		r.Get("/api/user/orders", getOrderList(db))
 		r.Get("/api/user/balance", getCurBalance(db))
 		r.Get("/api/user/withdrawals", getWithdrawList(db))
@@ -118,6 +220,7 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
+		defer r.Body.Close()
 
 		err = json.Unmarshal(body, &u)
 		if err != nil {
@@ -126,36 +229,19 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 			return
 		}
 
+		// повторяющаяся логика
 		if u.Login == "" || u.Password == "" {
 			log.Printf("login and password are empty")
 			http.Error(rw, "login and password are required", http.StatusBadRequest)
 			return
 		}
 
-		password, err := createHashPassword(u.Password, pepperKey)
-		if err != nil {
-			log.Printf("bcrypt hashing failed: %v", err)
-			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-
-		userID, err := db.RegisterReq(u.Login, string(password), conn)
+		token, err := u.Create(conn, secretKey, pepperKey)
 		if err != nil {
 			if errors.Is(err, db.ErrLoginExists) {
-				log.Printf("login already exists: %v", err)
 				http.Error(rw, "login already exists", http.StatusConflict)
-				return
 			}
-			log.Printf("failed to register user: %v", err)
 			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-
-		token, err := buildJWT(userID, secretKey)
-		if err != nil {
-			log.Printf("failed to generate token: %v", err)
-			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
 		}
 
 		http.SetCookie(rw, &http.Cookie{
@@ -190,36 +276,26 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 			return
 		}
 
+		// повторяющаяся логика
 		if u.Login == "" || u.Password == "" {
 			log.Printf("login and password are empty")
 			http.Error(rw, "login and password are required", http.StatusBadRequest)
 			return
 		}
 
-		userID, receivedPassword, err := db.AuthReq(conn, u.Login)
+		token, err := u.Check(conn, pepperKey, secretKey)
 		if err != nil {
-			if errors.Is(err, db.ErrUserNotExists) {
-				log.Printf("unknown user: %v", err)
+			switch err {
+			case db.ErrUserNotExists:
 				http.Error(rw, "unknown user", http.StatusUnauthorized)
 				return
+			case db.ErrInvalidPassword:
+				http.Error(rw, "invalid login or password", http.StatusUnauthorized)
+				return
+			default:
+				http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+				return
 			}
-			log.Printf("failed to get password: %v", err)
-			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-
-		err = checkPassword(u.Password, pepperKey, receivedPassword)
-		if err != nil {
-			log.Printf("invalid password: %v", err)
-			http.Error(rw, "invalid login or password", http.StatusUnauthorized)
-			return
-		}
-
-		token, err := buildJWT(userID, secretKey)
-		if err != nil {
-			log.Printf("failed to generate token: %v", err)
-			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
 		}
 
 		http.SetCookie(rw, &http.Cookie{
@@ -233,19 +309,18 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 	}
 }
 
-func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFunc {
+func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr, retryNum string) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(userContextKey).(string)
-		if !ok || userID == "" {
-			log.Printf("не удалось получить userID: %v", userID)
-			http.Error(rw, "unauthorized", http.StatusUnauthorized)
+		userID, err := getUserIDFromContext(r)
+		if err != nil {
+			http.Error(rw, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
 			log.Printf("failed to read body: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 		defer r.Body.Close()
@@ -253,34 +328,37 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFun
 		orderNum, err := strconv.Atoi(string(body))
 		if err != nil {
 			log.Printf("failed to convert string to int: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
-		ok = luhn.IsValid(int64(orderNum))
+		ok := luhn.IsValid(int64(orderNum))
 		if !ok {
 			log.Printf("order number is not valid: %v", err)
-			http.Error(rw, "internal server error", http.StatusUnprocessableEntity)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusUnprocessableEntity)
 			return
 		}
 
 		receivedUserID, err := db.CheckUniqOrder(orderNum, conn)
 		if err != nil {
 			log.Printf("не удалось получить userId из бд: %v", err)
-			http.Error(rw, "internal server error", http.StatusInternalServerError)
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
 		switch receivedUserID {
 		case "":
-			err := db.AddOrder(orderNum, userID, conn)
+			uploadedAt := time.Now().Format(time.RFC3339)
+			status := "NEW"
+
+			err := db.AddOrder(conn, orderNum, userID, status, uploadedAt)
 			if err != nil {
 				log.Printf("не удалось добавить заказа в orders: %v", err)
-				http.Error(rw, "internal server error", http.StatusInternalServerError)
+				http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
 
-			go models.AccrualRequest(conn, orderNum, userID, accrualAddr)
+			go models.AccrualRequest(conn, orderNum, userID, accrualAddr, retryNum)
 
 			rw.WriteHeader(http.StatusAccepted)
 			rw.Write([]byte("новый номер заказа принят в обработку"))
@@ -297,23 +375,20 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFun
 
 func getOrderList(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(userContextKey).(string)
-		if !ok || userID == "" {
-			log.Printf("не удалось получить userID: %v", userID)
-			rw.Header().Set("Content-Type", "application/json")
-			http.Error(rw, `{"error":"Unauthorized"}`, http.StatusUnauthorized)
+		rw.Header().Set("Content-Type", "application/json")
+
+		userID, err := getUserIDFromContext(r)
+		if err != nil {
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
 		orders, err := db.GetOrdersList(conn, userID)
 		if err != nil {
 			log.Printf("couldn't get order list: %v", err)
-			rw.Header().Set("Content-Type", "application/json")
 			http.Error(rw, `{"error":"Internal Server Error"}`, http.StatusInternalServerError)
 			return
 		}
-
-		rw.Header().Set("Content-Type", "application/json")
 
 		if len(orders) == 0 {
 			log.Printf("orders is empty")
@@ -344,25 +419,20 @@ func getOrderList(conn *pgxpool.Pool) http.HandlerFunc {
 
 func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(userContextKey).(string)
-		if !ok || userID == "" {
-			log.Printf("не удалось получить userID: %v", userID)
-			rw.Header().Set("Content-Type", "application/json")
-			rw.WriteHeader(http.StatusUnauthorized)
-			json.NewEncoder(rw).Encode(map[string]string{"error": http.StatusText(http.StatusUnauthorized)})
+		rw.Header().Set("Content-Type", "application/json")
+
+		userID, err := getUserIDFromContext(r)
+		if err != nil {
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
 		balance, err := db.GetUserBalance(conn, userID)
 		if err != nil {
 			log.Printf("couldn't get current list: %v", err)
-			rw.Header().Set("Content-Type", "application/json")
-			rw.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(rw).Encode(map[string]string{"error": http.StatusText(http.StatusInternalServerError)})
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
-
-		rw.Header().Set("Content-Type", "application/json")
 
 		jsonData, err := json.MarshalIndent(balance, "", "    ")
 		if err != nil {
@@ -378,10 +448,10 @@ func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 
 func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		var w WithdrawModel
-		userID, ok := r.Context().Value(userContextKey).(string)
-		if !ok || userID == "" {
-			log.Printf("не удалось получить userID: %v", userID)
+		w := newWithdrawModel()
+
+		userID, err := getUserIDFromContext(r)
+		if err != nil {
 			http.Error(rw, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
@@ -401,16 +471,18 @@ func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		err = db.SuccessWithdraw(conn, userID, w.Order, w.Sum)
-		if err != nil {
-			if errors.Is(err, db.ErrInsufficientBalance) {
-				log.Printf("на счету недостаточно средств: %v", err)
-				http.Error(rw, "на счету недостаточно средств", http.StatusPaymentRequired)
+		if err = w.Create(conn, userID); err != nil {
+			switch err {
+			case db.ErrInsufficientBalance:
+				http.Error(rw, http.StatusText(http.StatusPaymentRequired), http.StatusPaymentRequired)
+				return
+			case db.ErrUnUnprocessableEntity:
+				http.Error(rw, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+				return
+			default:
+				http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 				return
 			}
-			log.Printf("failed to process withdraw: %v", err)
-			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
 		}
 
 		rw.WriteHeader(http.StatusOK)
@@ -420,10 +492,10 @@ func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 
 func getWithdrawList(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		userID, ok := r.Context().Value(userContextKey).(string)
-		if !ok || userID == "" {
-			log.Printf("не удалось получить userID: %v", userID)
-			http.Error(rw, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+		userID, err := getUserIDFromContext(r)
+		if err != nil {
+			rw.Header().Set("Content-Type", "application/json")
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
@@ -456,6 +528,16 @@ func getWithdrawList(conn *pgxpool.Pool) http.HandlerFunc {
 			log.Printf("failed to encode response: %v", err)
 		}
 	}
+}
+
+func getUserIDFromContext(r *http.Request) (string, error) {
+	userID, ok := r.Context().Value(userContextKey).(string)
+	if !ok || userID == "" {
+		log.Printf("не удалось получить userID: %v", userID)
+		return "", db.ErrGetUserID
+	}
+
+	return userID, nil
 }
 
 func buildJWT(userID int, key string) (string, error) {
