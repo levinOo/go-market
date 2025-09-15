@@ -11,7 +11,6 @@ type Config struct {
 	SystemAddr   string `env:"ACCRUAL_SYSTEM_ADDRESS"`
 	PepperKey    string `env:"KEY"`
 	SecretKey    string `env:"SECRET_KEY"`
-	RetryNumber  string `env:"RETRY_NUMBER"`
 }
 
 func GetConfig() Config {
@@ -20,7 +19,6 @@ func GetConfig() Config {
 	addrSystem := flag.String("r", "", "System addres")
 	pepperKey := flag.String("k", "", "Hash key")
 	secretKey := flag.String("s", "", "Secret key")
-	retryNumber := flag.String("s", "3", "number of retries")
 
 	flag.Parse()
 
@@ -30,7 +28,6 @@ func GetConfig() Config {
 		SystemAddr:   getValue(*addrSystem, os.Getenv("ACCRUAL_SYSTEM_ADDRESS")),
 		PepperKey:    getValue(*pepperKey, os.Getenv("KEY")),
 		SecretKey:    getValue(*secretKey, os.Getenv("SECRET_KEY")),
-		RetryNumber:  getValue(*retryNumber, os.Getenv("RETRY_NUMBER")),
 	}
 
 	return cfg
