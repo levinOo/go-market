@@ -65,7 +65,7 @@ func Test_loadOrderNumHandler(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := loadOrderNumHandler(tt.conn, tt.accrualAddr, tt.retryNum)
+			got := loadOrderNumHandler(tt.conn, tt.accrualAddr)
 			// TODO: update the condition below to compare got with tt.want.
 			if true {
 				t.Errorf("loadOrderNumHandler() = %v, want %v", got, tt.want)

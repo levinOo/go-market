@@ -154,7 +154,7 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config) *chi.Mux {
 	r.Group(func(r chi.Router) {
 		r.Use(authMiddleware(cfg.SecretKey))
 
-		r.Post("/api/user/orders", loadOrderNumHandler(db, cfg.SystemAddr, cfg.RetryNumber))
+		r.Post("/api/user/orders", loadOrderNumHandler(db, cfg.SystemAddr))
 		r.Get("/api/user/orders", getOrderList(db))
 		r.Get("/api/user/balance", getCurBalance(db))
 		r.Get("/api/user/withdrawals", getWithdrawList(db))
@@ -309,7 +309,7 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 	}
 }
 
-func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr, retryNum string) http.HandlerFunc {
+func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, err := getUserIDFromContext(r)
 		if err != nil {
@@ -358,7 +358,7 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr, retryNum string) http.
 				return
 			}
 
-			go models.AccrualRequest(conn, orderNum, userID, accrualAddr, retryNum)
+			go models.AccrualRequest(conn, orderNum, userID, accrualAddr)
 
 			rw.WriteHeader(http.StatusAccepted)
 			rw.Write([]byte("новый номер заказа принят в обработку"))

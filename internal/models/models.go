@@ -30,7 +30,7 @@ var (
 	accrualUnblockTime time.Time
 )
 
-func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr, retryNum string) {
+func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string) {
 	o := newAccrualModel()
 
 	status := "PROCESSING"
