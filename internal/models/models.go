@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -35,67 +36,66 @@ func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string
 
 	status := "PROCESSING"
 
-	err := storage.UpdateOrderStatus(conn, status, orderNum)
-	if err != nil {
+	if err := storage.UpdateOrderStatus(conn, status, orderNum); err != nil {
 		log.Printf("err to update order status: %v", err)
+		return
 	}
-
-	waitIfBlocked()
 
 	uri := fmt.Sprintf("%s/api/orders/%v", accrualAddr, orderNum)
 
-	for i := 0; i < 3; i++ {
-		resp, err := http.Get(uri)
-		if err != nil {
-			log.Printf("%v", err)
-		}
-		defer resp.Body.Close()
+	for attempt := 0; attempt < 3; attempt++ {
+		waitIfBlocked()
 
-		switch resp.StatusCode {
-		case http.StatusNoContent:
-			log.Printf("сервис accrual прислал код 204: заказ не зарегистрирован в системе расчёта.")
-
-			return
-		case http.StatusTooManyRequests:
-			log.Printf("сервис accrual прислал код 429: превышено количество запросов к сервису.")
-
-			_, err := io.ReadAll(resp.Body)
-			if err != nil {
-				log.Printf("failed to read resp body: %v", err)
-				return
-			}
-
-			retryDur := resp.Header.Get("Retry-After")
-
-			err = blockAccrualRequest(retryDur)
-			if err != nil {
-				log.Printf("failed to block all requests: %v", err)
-			}
-
-			return
-		default:
-			data, err := io.ReadAll(resp.Body)
-			if err != nil {
-				log.Printf("%v", err)
-			}
-
-			err = json.Unmarshal(data, &o)
-			if err != nil {
-				log.Printf("%v", err)
+		if err := getAccrualResp(uri, o); err != nil {
+			log.Printf("accrual request failed: %v", err)
+			switch {
+			case strings.Contains(err.Error(), "429"):
 				continue
-			}
-
-			switch o.Status {
-			case "PROCESSED":
-				storage.UpdateProcessedStatus(conn, o.Status, o.Accrual, orderNum)
-				storage.UpdateBalance(conn, o.Accrual, userID)
+			case strings.Contains(err.Error(), "204"):
 				return
-			case "INVALID":
-				storage.UpdateOrderStatus(conn, o.Status, orderNum)
 			default:
 				time.Sleep(time.Second)
+				continue
 			}
 		}
+
+		switch o.Status {
+		case "PROCESSED":
+			storage.UpdateProcessedStatus(conn, o.Status, o.Accrual, orderNum)
+			storage.UpdateBalance(conn, o.Accrual, userID)
+			return
+		case "INVALID":
+			storage.UpdateOrderStatus(conn, o.Status, orderNum)
+		default:
+			time.Sleep(time.Second)
+		}
+	}
+}
+
+func getAccrualResp(uri string, o *AccrualModel) error {
+	resp, err := http.Get(uri)
+	if err != nil {
+		return fmt.Errorf("failed to make request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	switch resp.StatusCode {
+	case http.StatusNoContent:
+		return fmt.Errorf("accrual service: 204 No Content (order not registered)")
+	case http.StatusTooManyRequests:
+		retryDur := resp.Header.Get("Retry-After")
+		if err := blockAccrualRequest(retryDur); err != nil {
+			return fmt.Errorf("failed to block requests after 429: %w", err)
+		}
+		return fmt.Errorf("accrual service: 429 Too Many Requests (retry after %s)", retryDur)
+	case http.StatusOK:
+		if err := json.NewDecoder(resp.Body).Decode(o); err != nil {
+			return fmt.Errorf("failed to decode accrual response: %w", err)
+		}
+		return nil
+	default:
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status %d: %s", resp.StatusCode, string(body))
 	}
 }
 

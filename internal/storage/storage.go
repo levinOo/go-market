@@ -230,16 +230,8 @@ func GetUserBalance(conn *pgxpool.Pool, userID string) (UserBalance, error) {
 
 // ____________________Запрос на списание средств:
 
-func WithdrawBalance(conn *pgxpool.Pool, amount float64, userID string) error {
-	ctx := context.Background()
-
-	tx, err := conn.Begin(ctx)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback(ctx)
-
-	res, err := tx.Exec(ctx, `
+func TryWithdrawBalance(conn *pgxpool.Pool, amount float64, userID string) error {
+	res, err := conn.Exec(context.Background(), `
         UPDATE balance
         SET current = current - $1
         WHERE user_id = $2 AND current >= $1
@@ -247,20 +239,21 @@ func WithdrawBalance(conn *pgxpool.Pool, amount float64, userID string) error {
 	if err != nil {
 		return err
 	}
+
 	if res.RowsAffected() == 0 {
 		return ErrInsufficientBalance
 	}
 
-	_, err = tx.Exec(ctx, `
-        UPDATE balance
-        SET withdraw = withdraw + $1
-        WHERE user_id = $2
-    `, amount, userID)
-	if err != nil {
-		return err
-	}
+	return nil
+}
 
-	if err := tx.Commit(ctx); err != nil {
+func SumWithdrawBalance(conn *pgxpool.Pool, amount float64, userID string) error {
+	_, err := conn.Exec(context.Background(), `
+		UPDATE balance
+    	SET withdraw = withdraw + $1
+   		WHERE user_id = $2
+		`, amount, userID)
+	if err != nil {
 		return err
 	}
 

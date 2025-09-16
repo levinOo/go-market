@@ -108,16 +108,20 @@ func (w *Withdraw) Create(conn *pgxpool.Pool, userID string) error {
 		return err
 	}
 
-	if err = storage.WithdrawBalance(conn, w.Sum, userID); err != nil {
-		switch err {
-		case storage.ErrInsufficientBalance:
+	err = storage.TryWithdrawBalance(conn, w.Sum, userID)
+	if err != nil {
+		if errors.Is(err, storage.ErrInsufficientBalance) {
 			log.Printf("на счету недостаточно средств: %v", err)
 			return err
-		default:
-			log.Printf("failed to process withdraw: %v", err)
-			return err
-
 		}
+		log.Printf("failed to process withdraw: %v", err)
+		return err
+	}
+
+	err = storage.SumWithdrawBalance(conn, w.Sum, userID)
+	if err != nil {
+		log.Printf("failed to sum withdraw balance: %v", err)
+		return err
 	}
 
 	processedAt := time.Now().Format(time.RFC3339)
