@@ -21,11 +21,6 @@ func Serve(cfg config.Config) error {
 		log.Fatalf("DB connection failed: %v", err)
 	}
 
-	err = db.RunMigrations(cfg.DataBaseAddr)
-	if err != nil {
-		log.Fatalf("failed to run migrations: %v", err)
-	}
-
 	router := handler.NewRouter(dbConn, cfg)
 
 	serverErr := make(chan error, 1)

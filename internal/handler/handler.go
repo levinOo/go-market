@@ -17,8 +17,8 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/levinOo/go-market/internal/config"
-	"github.com/levinOo/go-market/internal/config/db"
 	"github.com/levinOo/go-market/internal/models"
+	"github.com/levinOo/go-market/internal/storage"
 	"github.com/phedde/luhn-algorithm"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -44,17 +44,17 @@ func (u *User) Create(conn *pgxpool.Pool, secretKey, pepperKey string) (string, 
 		return "", err
 	}
 
-	userID, err := db.RegisterReq(u.Login, string(password), conn)
+	userID, err := storage.RegisterReq(u.Login, string(password), conn)
 	if err != nil {
-		if errors.Is(err, db.ErrLoginExists) {
+		if errors.Is(err, storage.ErrLoginExists) {
 			log.Printf("login already exists: %v", err)
-			return "", db.ErrLoginExists
+			return "", storage.ErrLoginExists
 		}
 		log.Printf("failed to register user: %v", err)
 		return "", err
 	}
 
-	err = db.NewBalanceRecord(conn, userID)
+	err = storage.NewBalanceRecord(conn, userID)
 	if err != nil {
 		log.Printf("failed to create user balance: %v", err)
 		return "", err
@@ -70,11 +70,11 @@ func (u *User) Create(conn *pgxpool.Pool, secretKey, pepperKey string) (string, 
 }
 
 func (u *User) Check(conn *pgxpool.Pool, pepperKey, secretKey string) (string, error) {
-	userID, receivedPassword, err := db.AuthReq(conn, u.Login)
+	userID, receivedPassword, err := storage.AuthReq(conn, u.Login)
 	if err != nil {
-		if errors.Is(err, db.ErrUserNotExists) {
+		if errors.Is(err, storage.ErrUserNotExists) {
 			log.Printf("unknown user: %v", err)
-			return "", db.ErrUserNotExists
+			return "", storage.ErrUserNotExists
 		}
 		log.Printf("failed to get password: %v", err)
 		return "", err
@@ -83,7 +83,7 @@ func (u *User) Check(conn *pgxpool.Pool, pepperKey, secretKey string) (string, e
 	err = checkPassword(u.Password, pepperKey, receivedPassword)
 	if err != nil {
 		log.Printf("invalid password: %v", err)
-		return "", db.ErrInvalidPassword
+		return "", storage.ErrInvalidPassword
 	}
 
 	token, err := buildJWT(userID, secretKey)
@@ -108,25 +108,21 @@ func (w *Withdraw) Create(conn *pgxpool.Pool, userID string) error {
 		return err
 	}
 
-	err = db.TryWithdrawBalance(conn, w.Sum, userID)
-	if err != nil {
-		if errors.Is(err, db.ErrInsufficientBalance) {
+	if err = storage.WithdrawBalance(conn, w.Sum, userID); err != nil {
+		switch err {
+		case storage.ErrInsufficientBalance:
 			log.Printf("на счету недостаточно средств: %v", err)
 			return err
-		}
-		log.Printf("failed to process withdraw: %v", err)
-		return err
-	}
+		default:
+			log.Printf("failed to process withdraw: %v", err)
+			return err
 
-	err = db.SumWithdrawBalance(conn, w.Sum, userID)
-	if err != nil {
-		log.Printf("failed to sum withdraw balance: %v", err)
-		return err
+		}
 	}
 
 	processedAt := time.Now().Format(time.RFC3339)
 
-	err = db.SuccessWithdraw(conn, userID, w.Order, processedAt, w.Sum)
+	err = storage.SuccessWithdraw(conn, userID, w.Order, processedAt, w.Sum)
 	if err != nil {
 		log.Printf("couldn't add withdrawal entry: %v", err)
 		return err
@@ -224,7 +220,7 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 
 		err = json.Unmarshal(body, &u)
 		if err != nil {
-			log.Printf("failed to unmarshal JSON: %v", err)
+			log.Printf("failed to read JSON: %v", err)
 			http.Error(rw, "invalid request format", http.StatusBadRequest)
 			return
 		}
@@ -238,7 +234,7 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 
 		token, err := u.Create(conn, secretKey, pepperKey)
 		if err != nil {
-			if errors.Is(err, db.ErrLoginExists) {
+			if errors.Is(err, storage.ErrLoginExists) {
 				http.Error(rw, "login already exists", http.StatusConflict)
 			}
 			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -271,7 +267,7 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 
 		err = json.Unmarshal(body, &u)
 		if err != nil {
-			log.Printf("failed to unmarshal JSON: %v", err)
+			log.Printf("failed to read JSON: %v", err)
 			http.Error(rw, "invalid request format", http.StatusBadRequest)
 			return
 		}
@@ -286,10 +282,10 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 		token, err := u.Check(conn, pepperKey, secretKey)
 		if err != nil {
 			switch err {
-			case db.ErrUserNotExists:
+			case storage.ErrUserNotExists:
 				http.Error(rw, "unknown user", http.StatusUnauthorized)
 				return
-			case db.ErrInvalidPassword:
+			case storage.ErrInvalidPassword:
 				http.Error(rw, "invalid login or password", http.StatusUnauthorized)
 				return
 			default:
@@ -339,7 +335,7 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFun
 			return
 		}
 
-		receivedUserID, err := db.CheckUniqOrder(orderNum, conn)
+		receivedUserID, err := storage.CheckUniqOrder(orderNum, conn)
 		if err != nil {
 			log.Printf("не удалось получить userId из бд: %v", err)
 			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -351,7 +347,7 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFun
 			uploadedAt := time.Now().Format(time.RFC3339)
 			status := "NEW"
 
-			err := db.AddOrder(conn, orderNum, userID, status, uploadedAt)
+			err := storage.AddOrder(conn, orderNum, userID, status, uploadedAt)
 			if err != nil {
 				log.Printf("не удалось добавить заказа в orders: %v", err)
 				http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -383,7 +379,7 @@ func getOrderList(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		orders, err := db.GetOrdersList(conn, userID)
+		orders, err := storage.GetOrdersList(conn, userID)
 		if err != nil {
 			log.Printf("couldn't get order list: %v", err)
 			http.Error(rw, `{"error":"Internal Server Error"}`, http.StatusInternalServerError)
@@ -427,7 +423,7 @@ func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		balance, err := db.GetUserBalance(conn, userID)
+		balance, err := storage.GetUserBalance(conn, userID)
 		if err != nil {
 			log.Printf("couldn't get current list: %v", err)
 			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -473,10 +469,10 @@ func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 
 		if err = w.Create(conn, userID); err != nil {
 			switch err {
-			case db.ErrInsufficientBalance:
+			case storage.ErrInsufficientBalance:
 				http.Error(rw, http.StatusText(http.StatusPaymentRequired), http.StatusPaymentRequired)
 				return
-			case db.ErrUnUnprocessableEntity:
+			case storage.ErrUnUnprocessableEntity:
 				http.Error(rw, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
 				return
 			default:
@@ -499,7 +495,7 @@ func getWithdrawList(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		withdraws, err := db.GetWitthdrawsList(conn, userID)
+		withdraws, err := storage.GetWitthdrawsList(conn, userID)
 		if err != nil {
 			log.Printf("couldn't get withdraw list: %v", err)
 			http.Error(rw, `{"error":"internal server error"}`, http.StatusInternalServerError)
@@ -534,7 +530,7 @@ func getUserIDFromContext(r *http.Request) (string, error) {
 	userID, ok := r.Context().Value(userContextKey).(string)
 	if !ok || userID == "" {
 		log.Printf("не удалось получить userID: %v", userID)
-		return "", db.ErrGetUserID
+		return "", storage.ErrGetUserID
 	}
 
 	return userID, nil

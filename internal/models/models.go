@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/levinOo/go-market/internal/config/db"
+	"github.com/levinOo/go-market/internal/storage"
 )
 
 type AccrualModel struct {
@@ -35,7 +35,7 @@ func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string
 
 	status := "PROCESSING"
 
-	err := db.UpdateOrderStatus(conn, status, orderNum)
+	err := storage.UpdateOrderStatus(conn, status, orderNum)
 	if err != nil {
 		log.Printf("err to update order status: %v", err)
 	}
@@ -87,11 +87,11 @@ func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string
 
 			switch o.Status {
 			case "PROCESSED":
-				db.UpdateProcessedStatus(conn, o.Status, o.Accrual, orderNum)
-				db.UpdateBalance(conn, o.Accrual, userID)
+				storage.UpdateProcessedStatus(conn, o.Status, o.Accrual, orderNum)
+				storage.UpdateBalance(conn, o.Accrual, userID)
 				return
 			case "INVALID":
-				db.UpdateOrderStatus(conn, o.Status, orderNum)
+				storage.UpdateOrderStatus(conn, o.Status, orderNum)
 			default:
 				time.Sleep(time.Second)
 			}
