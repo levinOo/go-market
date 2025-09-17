@@ -18,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/levinOo/go-market/internal/config"
 	"github.com/levinOo/go-market/internal/models"
+	"github.com/levinOo/go-market/internal/repository"
 	"github.com/levinOo/go-market/internal/storage"
 	"github.com/phedde/luhn-algorithm"
 	"golang.org/x/crypto/bcrypt"
@@ -26,143 +27,6 @@ import (
 type ctxKey string
 
 const userContextKey ctxKey = "user_id"
-
-type User struct {
-	Login    string `json:"login"`
-	Password string `json:"password"`
-}
-
-type Withdraw struct {
-	Order string  `json:"order"`
-	Sum   float64 `json:"sum"`
-}
-
-func (u *User) Create(conn *pgxpool.Pool, secretKey, pepperKey string) (string, error) {
-	password, err := createHashPassword(u.Password, pepperKey)
-	if err != nil {
-		log.Printf("bcrypt hashing failed: %v", err)
-		return "", err
-	}
-
-	userID, err := storage.RegisterReq(u.Login, string(password), conn)
-	if err != nil {
-		if errors.Is(err, storage.ErrLoginExists) {
-			log.Printf("login already exists: %v", err)
-			return "", storage.ErrLoginExists
-		}
-		log.Printf("failed to register user: %v", err)
-		return "", err
-	}
-
-	err = storage.NewBalanceRecord(conn, userID)
-	if err != nil {
-		log.Printf("failed to create user balance: %v", err)
-		return "", err
-	}
-
-	token, err := buildJWT(userID, secretKey)
-	if err != nil {
-		log.Printf("failed to generate token: %v", err)
-		return "", err
-	}
-
-	return token, nil
-}
-
-func (u *User) Check(conn *pgxpool.Pool, pepperKey, secretKey string) (string, error) {
-	userID, receivedPassword, err := storage.AuthReq(conn, u.Login)
-	if err != nil {
-		if errors.Is(err, storage.ErrUserNotExists) {
-			log.Printf("unknown user: %v", err)
-			return "", storage.ErrUserNotExists
-		}
-		log.Printf("failed to get password: %v", err)
-		return "", err
-	}
-
-	err = checkPassword(u.Password, pepperKey, receivedPassword)
-	if err != nil {
-		log.Printf("invalid password: %v", err)
-		return "", storage.ErrInvalidPassword
-	}
-
-	token, err := buildJWT(userID, secretKey)
-	if err != nil {
-		log.Printf("failed to generate token: %v", err)
-		return "", err
-	}
-
-	return token, nil
-}
-
-func (w *Withdraw) Create(conn *pgxpool.Pool, userID string) error {
-	orderNum, err := strconv.Atoi(w.Order)
-	if err != nil {
-		log.Printf("failed to convert string to int: %v", err)
-		return err
-	}
-
-	ok := luhn.IsValid(int64(orderNum))
-	if !ok {
-		log.Printf("неверный номер заказа: %v", err)
-		return err
-	}
-
-	err = storage.TryWithdrawBalance(conn, w.Sum, userID)
-	if err != nil {
-		if errors.Is(err, storage.ErrInsufficientBalance) {
-			log.Printf("на счету недостаточно средств: %v", err)
-			return err
-		}
-		log.Printf("failed to process withdraw: %v", err)
-		return err
-	}
-
-	err = storage.SumWithdrawBalance(conn, w.Sum, userID)
-	if err != nil {
-		log.Printf("failed to sum withdraw balance: %v", err)
-		return err
-	}
-
-	processedAt := time.Now().Format(time.RFC3339)
-
-	err = storage.SuccessWithdraw(conn, userID, w.Order, processedAt, w.Sum)
-	if err != nil {
-		log.Printf("couldn't add withdrawal entry: %v", err)
-		return err
-	}
-
-	return nil
-}
-
-func newUser() *User {
-	return &User{}
-}
-
-func newWithdrawModel() *Withdraw {
-	return &Withdraw{}
-}
-
-func NewRouter(db *pgxpool.Pool, cfg config.Config) *chi.Mux {
-	r := chi.NewRouter()
-
-	r.Group(func(r chi.Router) {
-		r.Post("/api/user/register", registerHandler(db, cfg.PepperKey, cfg.SecretKey))
-		r.Post("/api/user/login", loginHandler(db, cfg.PepperKey, cfg.SecretKey))
-	})
-
-	r.Group(func(r chi.Router) {
-		r.Use(authMiddleware(cfg.SecretKey))
-
-		r.Post("/api/user/orders", loadOrderNumHandler(db, cfg.SystemAddr))
-		r.Get("/api/user/orders", getOrderList(db))
-		r.Get("/api/user/balance", getCurBalance(db))
-		r.Get("/api/user/withdrawals", getWithdrawList(db))
-		r.Post("/api/user/balance/withdraw", withdrawReqHandler(db))
-	})
-
-	return r
-}
 
 func authMiddleware(key string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -210,9 +74,71 @@ func authMiddleware(key string) func(next http.Handler) http.Handler {
 	}
 }
 
+func NewRouter(db *pgxpool.Pool, cfg config.Config) *chi.Mux {
+	r := chi.NewRouter()
+
+	r.Group(func(r chi.Router) {
+		r.Post("/api/user/register", registerHandler(db, cfg.PepperKey, cfg.SecretKey))
+		r.Post("/api/user/login", loginHandler(db, cfg.PepperKey, cfg.SecretKey))
+	})
+
+	r.Group(func(r chi.Router) {
+		r.Use(authMiddleware(cfg.SecretKey))
+
+		r.Post("/api/user/orders", loadOrderNumHandler(db, cfg.SystemAddr))
+		r.Get("/api/user/orders", getOrderList(db))
+		r.Get("/api/user/balance", getCurBalance(db))
+		r.Get("/api/user/withdrawals", getWithdrawList(db))
+		r.Post("/api/user/balance/withdraw", withdrawReqHandler(db))
+	})
+
+	return r
+}
+
+type User struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
+}
+
+var NewUser = func() repository.UserRepository {
+	return &User{}
+}
+
+func (u *User) Create(conn *pgxpool.Pool, secretKey, pepperKey string) (string, error) {
+	password, err := createHashPassword(u.Password, pepperKey)
+	if err != nil {
+		log.Printf("bcrypt hashing failed: %v", err)
+		return "", err
+	}
+
+	userID, err := storage.RegisterReq(u.Login, string(password), conn)
+	if err != nil {
+		if errors.Is(err, storage.ErrLoginExists) {
+			log.Printf("login already exists: %v", err)
+			return "", storage.ErrLoginExists
+		}
+		log.Printf("failed to register user: %v", err)
+		return "", err
+	}
+
+	err = storage.NewBalanceRecord(conn, userID)
+	if err != nil {
+		log.Printf("failed to create user balance: %v", err)
+		return "", err
+	}
+
+	token, err := buildJWT(userID, secretKey)
+	if err != nil {
+		log.Printf("failed to generate token: %v", err)
+		return "", err
+	}
+
+	return token, nil
+}
+
 func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		u := newUser()
+		u := NewUser()
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -226,13 +152,6 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 		if err != nil {
 			log.Printf("failed to read JSON: %v", err)
 			http.Error(rw, "invalid request format", http.StatusBadRequest)
-			return
-		}
-
-		// повторяющаяся логика
-		if u.Login == "" || u.Password == "" {
-			log.Printf("login and password are empty")
-			http.Error(rw, "login and password are required", http.StatusBadRequest)
 			return
 		}
 
@@ -257,9 +176,35 @@ func registerHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) htt
 	}
 }
 
+func (u *User) Check(conn *pgxpool.Pool, pepperKey, secretKey string) (string, error) {
+	userID, receivedPassword, err := storage.AuthReq(conn, u.Login)
+	if err != nil {
+		if errors.Is(err, storage.ErrUserNotExists) {
+			log.Printf("unknown user: %v", err)
+			return "", storage.ErrUserNotExists
+		}
+		log.Printf("failed to get password: %v", err)
+		return "", err
+	}
+
+	err = checkPassword(u.Password, pepperKey, receivedPassword)
+	if err != nil {
+		log.Printf("invalid password: %v", err)
+		return "", storage.ErrInvalidPassword
+	}
+
+	token, err := buildJWT(userID, secretKey)
+	if err != nil {
+		log.Printf("failed to generate token: %v", err)
+		return "", err
+	}
+
+	return token, nil
+}
+
 func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		u := newUser()
+		u := NewUser()
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -273,13 +218,6 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 		if err != nil {
 			log.Printf("failed to read JSON: %v", err)
 			http.Error(rw, "invalid request format", http.StatusBadRequest)
-			return
-		}
-
-		// повторяющаяся логика
-		if u.Login == "" || u.Password == "" {
-			log.Printf("login and password are empty")
-			http.Error(rw, "login and password are required", http.StatusBadRequest)
 			return
 		}
 
@@ -309,6 +247,50 @@ func loginHandler(conn *pgxpool.Pool, pepperKey string, secretKey string) http.H
 	}
 }
 
+type Order struct {
+	userID string
+}
+
+var NewOrder = func(userID string) repository.OrderRepository {
+	return &Order{
+		userID: userID,
+	}
+}
+
+func (o *Order) LoadOrder(conn *pgxpool.Pool, orderNum int, accrualAddr string) (int, error) {
+	ok := luhn.IsValid(int64(orderNum))
+	if !ok {
+		log.Printf("order number is not valid")
+		return 0, fmt.Errorf("order number is not valid")
+	}
+
+	receivedUserID, err := storage.CheckUniqOrder(orderNum, conn)
+	if err != nil {
+		log.Printf("не удалось получить userId из бд: %v", err)
+		return 0, err
+	}
+
+	switch receivedUserID {
+	case "":
+		uploadedAt := time.Now().Format(time.RFC3339)
+		status := "NEW"
+
+		err := storage.AddOrder(conn, orderNum, o.userID, status, uploadedAt)
+		if err != nil {
+			log.Printf("не удалось добавить заказа в orders: %v", err)
+			return 0, err
+		}
+
+		go models.AccrualRequest(conn, orderNum, o.userID, accrualAddr)
+	case o.userID:
+		return http.StatusOK, nil
+	default:
+		return http.StatusConflict, nil
+	}
+
+	return http.StatusAccepted, nil
+}
+
 func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, err := getUserIDFromContext(r)
@@ -316,6 +298,8 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFun
 			http.Error(rw, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
+
+		u := NewOrder(userID)
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -332,45 +316,45 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFun
 			return
 		}
 
-		ok := luhn.IsValid(int64(orderNum))
-		if !ok {
-			log.Printf("order number is not valid: %v", err)
-			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusUnprocessableEntity)
-			return
-		}
-
-		receivedUserID, err := storage.CheckUniqOrder(orderNum, conn)
+		status, err := u.LoadOrder(conn, orderNum, accrualAddr)
 		if err != nil {
-			log.Printf("не удалось получить userId из бд: %v", err)
 			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
-		switch receivedUserID {
-		case "":
-			uploadedAt := time.Now().Format(time.RFC3339)
-			status := "NEW"
-
-			err := storage.AddOrder(conn, orderNum, userID, status, uploadedAt)
-			if err != nil {
-				log.Printf("не удалось добавить заказа в orders: %v", err)
-				http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-				return
-			}
-
-			go models.AccrualRequest(conn, orderNum, userID, accrualAddr)
-
+		switch status {
+		case http.StatusAccepted:
 			rw.WriteHeader(http.StatusAccepted)
 			rw.Write([]byte("новый номер заказа принят в обработку"))
-		case userID:
+		case http.StatusOK:
 			rw.WriteHeader(http.StatusOK)
 			rw.Write([]byte("номер заказа уже был загружен этим пользователем"))
 		default:
 			rw.WriteHeader(http.StatusConflict)
 			rw.Write([]byte("номер заказа уже был загружен другим пользователем"))
 		}
-
 	}
+}
+
+var NewOrderList = func(userID string) repository.OrderRepository {
+	return &Order{
+		userID: userID,
+	}
+}
+
+func (o *Order) GetList(conn *pgxpool.Pool) ([]storage.Order, error) {
+	orders, err := storage.GetOrdersList(conn, o.userID)
+	if err != nil {
+		log.Printf("couldn't get order list: %v", err)
+		return nil, err
+	}
+
+	if len(orders) == 0 {
+		log.Printf("orders is empty")
+		return nil, storage.ErrNoContent
+	}
+
+	return orders, nil
 }
 
 func getOrderList(conn *pgxpool.Pool) http.HandlerFunc {
@@ -383,16 +367,15 @@ func getOrderList(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		orders, err := storage.GetOrdersList(conn, userID)
-		if err != nil {
-			log.Printf("couldn't get order list: %v", err)
-			http.Error(rw, `{"error":"Internal Server Error"}`, http.StatusInternalServerError)
-			return
-		}
+		o := NewOrderList(userID)
 
-		if len(orders) == 0 {
-			log.Printf("orders is empty")
-			rw.WriteHeader(http.StatusNoContent)
+		orders, err := o.GetList(conn)
+		if err != nil {
+			if errors.Is(err, storage.ErrNoContent) {
+				http.Error(rw, http.StatusText(http.StatusNoContent), http.StatusNoContent)
+				return
+			}
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
 
@@ -417,6 +400,32 @@ func getOrderList(conn *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+type Balance struct {
+	userID string
+}
+
+var newBalance = func(userID string) repository.BalanceRepository {
+	return &Balance{
+		userID: userID,
+	}
+}
+
+func (b *Balance) GetBalance(conn *pgxpool.Pool) ([]byte, error) {
+	balance, err := storage.GetUserBalance(conn, b.userID)
+	if err != nil {
+		log.Printf("couldn't get current list: %v", err)
+		return nil, err
+	}
+
+	jsonData, err := json.MarshalIndent(balance, "", "    ")
+	if err != nil {
+		log.Printf("failed to marshal balance response: %v", err)
+		return nil, err
+	}
+
+	return jsonData, nil
+}
+
 func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		rw.Header().Set("Content-Type", "application/json")
@@ -427,16 +436,10 @@ func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		balance, err := storage.GetUserBalance(conn, userID)
-		if err != nil {
-			log.Printf("couldn't get current list: %v", err)
-			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
+		b := newBalance(userID)
 
-		jsonData, err := json.MarshalIndent(balance, "", "    ")
+		jsonData, err := b.GetBalance(conn)
 		if err != nil {
-			log.Printf("failed to marshal balance response: %v", err)
 			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -446,15 +449,68 @@ func getCurBalance(conn *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+type Withdraw struct {
+	userID string
+	Order  string  `json:"order"`
+	Sum    float64 `json:"sum"`
+}
+
+var NewWithdraw = func(userID string) repository.WithdrawRepository {
+	return &Withdraw{
+		userID: userID,
+	}
+}
+
+func (w *Withdraw) Create(conn *pgxpool.Pool) error {
+	orderNum, err := strconv.Atoi(w.Order)
+	if err != nil {
+		log.Printf("failed to convert string to int: %v", err)
+		return err
+	}
+
+	ok := luhn.IsValid(int64(orderNum))
+	if !ok {
+		log.Printf("неверный номер заказа: %v", err)
+		return err
+	}
+
+	err = storage.TryWithdrawBalance(conn, w.Sum, w.userID)
+	if err != nil {
+		if errors.Is(err, storage.ErrInsufficientBalance) {
+			log.Printf("на счету недостаточно средств: %v", err)
+			return err
+		}
+		log.Printf("failed to process withdraw: %v", err)
+		return err
+	}
+
+	err = storage.SumWithdrawBalance(conn, w.Sum, w.userID)
+	if err != nil {
+		log.Printf("failed to sum withdraw balance: %v", err)
+		return err
+	}
+
+	processedAt := time.Now().Format(time.RFC3339)
+
+	err = storage.SuccessWithdraw(conn, w.userID, w.Order, processedAt, w.Sum)
+	if err != nil {
+		log.Printf("couldn't add withdrawal entry: %v", err)
+		return err
+	}
+
+	return nil
+}
+
 func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
-		w := newWithdrawModel()
 
 		userID, err := getUserIDFromContext(r)
 		if err != nil {
 			http.Error(rw, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
+
+		w := NewWithdraw(userID)
 
 		body, err := io.ReadAll(r.Body)
 		if err != nil {
@@ -471,12 +527,12 @@ func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		if err = w.Create(conn, userID); err != nil {
+		if err = w.Create(conn); err != nil {
 			switch err {
 			case storage.ErrInsufficientBalance:
 				http.Error(rw, http.StatusText(http.StatusPaymentRequired), http.StatusPaymentRequired)
 				return
-			case storage.ErrUnUnprocessableEntity:
+			case storage.ErrUnprocessableEntity:
 				http.Error(rw, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
 				return
 			default:
@@ -490,6 +546,21 @@ func withdrawReqHandler(conn *pgxpool.Pool) http.HandlerFunc {
 	}
 }
 
+func (w *Withdraw) GetWitthdrawsList(conn *pgxpool.Pool) ([]storage.Withdraw, error) {
+	withdraws, err := storage.GetWitthdrawsList(conn, w.userID)
+	if err != nil {
+		log.Printf("couldn't get withdraw list: %v", err)
+		return nil, err
+	}
+
+	if len(withdraws) == 0 {
+		log.Printf("нет ни одного списания")
+		return nil, storage.ErrNoContent
+	}
+
+	return withdraws, nil
+}
+
 func getWithdrawList(conn *pgxpool.Pool) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, err := getUserIDFromContext(r)
@@ -499,32 +570,30 @@ func getWithdrawList(conn *pgxpool.Pool) http.HandlerFunc {
 			return
 		}
 
-		withdraws, err := storage.GetWitthdrawsList(conn, userID)
+		w := NewWithdraw(userID)
+
+		withdrawls, err := w.GetWitthdrawsList(conn)
 		if err != nil {
-			log.Printf("couldn't get withdraw list: %v", err)
-			http.Error(rw, `{"error":"internal server error"}`, http.StatusInternalServerError)
+			if errors.Is(err, storage.ErrNoContent) {
+				http.Error(rw, http.StatusText(http.StatusNoContent), http.StatusNoContent)
+				return
+			}
+			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
-
-		if len(withdraws) == 0 {
-			log.Printf("нет ни одного списания")
-			rw.WriteHeader(http.StatusNoContent)
-			return
-		}
-
 		rw.Header().Set("Content-Type", "application/json")
 
 		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 			rw.Header().Set("Content-Encoding", "gzip")
 			gz := gzip.NewWriter(rw)
 			defer gz.Close()
-			if err := json.NewEncoder(gz).Encode(withdraws); err != nil {
+			if err := json.NewEncoder(gz).Encode(withdrawls); err != nil {
 				log.Printf("failed to encode gzipped response: %v", err)
 			}
 			return
 		}
 
-		if err := json.NewEncoder(rw).Encode(withdraws); err != nil {
+		if err := json.NewEncoder(rw).Encode(withdrawls); err != nil {
 			log.Printf("failed to encode response: %v", err)
 		}
 	}

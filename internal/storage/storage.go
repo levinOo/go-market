@@ -10,12 +10,13 @@ import (
 )
 
 var (
-	ErrLoginExists           = errors.New("login already exists")
-	ErrUserNotExists         = errors.New("user not exists")
-	ErrInsufficientBalance   = errors.New("insufficient balance")
-	ErrInvalidPassword       = errors.New("invalid password")
-	ErrGetUserID             = errors.New("couldn't get the userID")
-	ErrUnUnprocessableEntity = errors.New("invalid order number")
+	ErrLoginExists         = errors.New("login already exists")
+	ErrUserNotExists       = errors.New("user not exists")
+	ErrInsufficientBalance = errors.New("insufficient balance")
+	ErrInvalidPassword     = errors.New("invalid password")
+	ErrGetUserID           = errors.New("couldn't get the userID")
+	ErrUnprocessableEntity = errors.New("invalid order number")
+	ErrNoContent           = errors.New("no content")
 )
 
 type Order struct {
