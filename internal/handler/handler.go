@@ -261,7 +261,7 @@ func (o *Order) LoadOrder(conn *pgxpool.Pool, orderNum int, accrualAddr string) 
 	ok := luhn.IsValid(int64(orderNum))
 	if !ok {
 		log.Printf("order number is not valid")
-		return 0, fmt.Errorf("order number is not valid")
+		return 0, storage.ErrUnprocessableEntity
 	}
 
 	receivedUserID, err := storage.CheckUniqOrder(orderNum, conn)
@@ -318,6 +318,10 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFun
 
 		status, err := u.LoadOrder(conn, orderNum, accrualAddr)
 		if err != nil {
+			if errors.Is(err, storage.ErrUnprocessableEntity) {
+				http.Error(rw, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)
+				return
+			}
 			http.Error(rw, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}

@@ -33,8 +33,8 @@ type Withdraw struct {
 }
 
 type UserBalance struct {
-	Current  float64 `json:"current"`
-	Withdraw float64 `json:"withdraw"`
+	Current   float64 `json:"current"`
+	Withdrawn float64 `json:"withdrawn"`
 }
 
 // ____________________Регистрация пользователя:
@@ -220,7 +220,7 @@ func GetUserBalance(conn *pgxpool.Pool, userID string) (UserBalance, error) {
 		SELECT current, withdraw
 		FROM balance
 		WHERE user_id = $1
-	`, userID).Scan(&u.Current, &u.Withdraw)
+	`, userID).Scan(&u.Current, &u.Withdrawn)
 
 	if err != nil {
 		return UserBalance{}, err
