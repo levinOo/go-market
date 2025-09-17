@@ -31,7 +31,7 @@ var (
 	accrualUnblockTime time.Time
 )
 
-func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string) {
+func AccrualRequest(conn *pgxpool.Pool, orderNum, retryNum int, userID, accrualAddr string) {
 	o := newAccrualModel()
 
 	status := "PROCESSING"
@@ -43,18 +43,22 @@ func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string
 
 	uri := fmt.Sprintf("%s/api/orders/%v", accrualAddr, orderNum)
 
-	for attempt := 0; attempt < 3; attempt++ {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for attempt := 0; attempt < retryNum; attempt++ {
 		waitIfBlocked()
 
 		if err := getAccrualResp(uri, o); err != nil {
 			log.Printf("accrual request failed: %v", err)
 			switch {
 			case strings.Contains(err.Error(), "429"):
+				<-ticker.C
 				continue
 			case strings.Contains(err.Error(), "204"):
 				return
 			default:
-				time.Sleep(time.Second)
+				<-ticker.C
 				continue
 			}
 		}
@@ -67,7 +71,7 @@ func AccrualRequest(conn *pgxpool.Pool, orderNum int, userID, accrualAddr string
 		case "INVALID":
 			storage.UpdateOrderStatus(conn, o.Status, orderNum)
 		default:
-			time.Sleep(time.Second)
+			<-ticker.C
 		}
 	}
 }

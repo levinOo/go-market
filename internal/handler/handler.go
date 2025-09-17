@@ -85,7 +85,7 @@ func NewRouter(db *pgxpool.Pool, cfg config.Config) *chi.Mux {
 	r.Group(func(r chi.Router) {
 		r.Use(authMiddleware(cfg.SecretKey))
 
-		r.Post("/api/user/orders", loadOrderNumHandler(db, cfg.SystemAddr))
+		r.Post("/api/user/orders", loadOrderNumHandler(db, cfg.SystemAddr, cfg.AccrualRetryNum))
 		r.Get("/api/user/orders", getOrderList(db))
 		r.Get("/api/user/balance", getCurBalance(db))
 		r.Get("/api/user/withdrawals", getWithdrawList(db))
@@ -257,7 +257,7 @@ var NewOrder = func(userID string) repository.OrderRepository {
 	}
 }
 
-func (o *Order) LoadOrder(conn *pgxpool.Pool, orderNum int, accrualAddr string) (int, error) {
+func (o *Order) LoadOrder(conn *pgxpool.Pool, orderNum, retryNum int, accrualAddr string) (int, error) {
 	ok := luhn.IsValid(int64(orderNum))
 	if !ok {
 		log.Printf("order number is not valid")
@@ -281,7 +281,7 @@ func (o *Order) LoadOrder(conn *pgxpool.Pool, orderNum int, accrualAddr string) 
 			return 0, err
 		}
 
-		go models.AccrualRequest(conn, orderNum, o.userID, accrualAddr)
+		go models.AccrualRequest(conn, orderNum, retryNum, o.userID, accrualAddr)
 	case o.userID:
 		return http.StatusOK, nil
 	default:
@@ -291,7 +291,7 @@ func (o *Order) LoadOrder(conn *pgxpool.Pool, orderNum int, accrualAddr string) 
 	return http.StatusAccepted, nil
 }
 
-func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFunc {
+func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string, retryNum int) http.HandlerFunc {
 	return func(rw http.ResponseWriter, r *http.Request) {
 		userID, err := getUserIDFromContext(r)
 		if err != nil {
@@ -316,7 +316,7 @@ func loadOrderNumHandler(conn *pgxpool.Pool, accrualAddr string) http.HandlerFun
 			return
 		}
 
-		status, err := u.LoadOrder(conn, orderNum, accrualAddr)
+		status, err := u.LoadOrder(conn, orderNum, retryNum, accrualAddr)
 		if err != nil {
 			if errors.Is(err, storage.ErrUnprocessableEntity) {
 				http.Error(rw, http.StatusText(http.StatusUnprocessableEntity), http.StatusUnprocessableEntity)

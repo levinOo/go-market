@@ -11,7 +11,7 @@ type UserRepository interface {
 }
 
 type OrderRepository interface {
-	LoadOrder(conn *pgxpool.Pool, orderNum int, accrualAddr string) (int, error)
+	LoadOrder(conn *pgxpool.Pool, orderNum, retryNum int, accrualAddr string) (int, error)
 	GetList(conn *pgxpool.Pool) ([]storage.Order, error)
 }
 
